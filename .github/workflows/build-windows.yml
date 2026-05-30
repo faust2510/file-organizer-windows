@@ -1,0 +1,39 @@
+name: 打包 Windows 安装包
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+
+    - name: 设置 Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: 安装依赖
+      run: |
+        python -m pip install --upgrade pip
+        pip install flet send2trash pyinstaller
+
+    - name: 打包 exe
+      run: |
+        pyinstaller --noconfirm --onedir --windowed --name "妈妈文件整理助手" --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;." main_flet.py
+
+    - name: 压缩为 zip
+      run: |
+        Compress-Archive -Path "dist\妈妈文件整理助手" -DestinationPath "妈妈文件整理助手-Windows.zip"
+
+    - name: 上传构建产物
+      uses: actions/upload-artifact@v4
+      with:
+        name: 妈妈文件整理助手-Windows
+        path: 妈妈文件整理助手-Windows.zip
+        retention-days: 30

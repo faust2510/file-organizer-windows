@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+venv_flet/
+venv_build/
+dist/
+build/
+*.spec
+.omc/
+.DS_Store
