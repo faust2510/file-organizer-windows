@@ -54,7 +54,7 @@ jobs:
         @"
         @echo off
         cd /d "%~dp0"
-        start "" "妈妈文件整理助手.exe"
+        start "" "FileOrganizer.exe"
         "@ | Out-File -FilePath "$exeDir\启动.bat" -Encoding ascii
 
     - name: 安装 Inno Setup 并配置中文语言
@@ -72,14 +72,15 @@ jobs:
     - name: 打包安装程序
       shell: pwsh
       run: |
-        Copy-Item "dist\FileOrganizer.exe" -Destination "dist\妈妈文件整理助手\FileOrganizer.exe"
+        New-Item -ItemType Directory -Force -Path "dist\FileOrganizer"
+        Copy-Item "dist\FileOrganizer.exe" -Destination "dist\FileOrganizer\FileOrganizer.exe"
         iscc setup.iss /DMyAppVersion="${{ steps.version.outputs.version }}"
 
     - name: 压缩为 zip
       shell: pwsh
       run: |
         $zipName = "妈妈文件整理助手-Windows-v${{ steps.version.outputs.version }}.zip"
-        Compress-Archive -Path "dist\妈妈文件整理助手\*" -DestinationPath $zipName
+        Compress-Archive -Path "dist\FileOrganizer\*" -DestinationPath $zipName
         echo "ZIP_PATH=$zipName" >> $env:GITHUB_ENV
         echo "📦 已创建: $zipName"
 
