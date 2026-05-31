@@ -112,6 +112,13 @@ class FileOrganizerApp:
             style=ft.ButtonStyle(padding=16, shape=ft.RoundedRectangleBorder(radius=8), bgcolor=ft.Colors.ORANGE_700),
             on_click=self._on_undo,
         )
+        self.btn_stats = ft.FilledButton(
+            "查看统计",
+            icon=ft.Icons.BAR_CHART,
+            style=ft.ButtonStyle(padding=16, shape=ft.RoundedRectangleBorder(radius=8), bgcolor=ft.Colors.PURPLE_700),
+            on_click=self._on_show_stats,
+            disabled=True,
+        )
 
         # 搜索框
         self.search_field = ft.TextField(
@@ -203,7 +210,7 @@ class FileOrganizerApp:
             # 工具栏
             ft.Container(
                 content=ft.Row(
-                    controls=[self.btn_scan, self.btn_organize, self.btn_undo],
+                    controls=[self.btn_scan, self.btn_organize, self.btn_undo, self.btn_stats],
                     spacing=12,
                 ),
                 padding=ft.Padding.only(left=16, top=12, right=16, bottom=12),
@@ -315,6 +322,7 @@ class FileOrganizerApp:
         self.btn_scan.disabled = False
         self.btn_scan.text = "扫描文件"
         self.btn_organize.disabled = not self.plan
+        self.btn_stats.disabled = not self.files
         self.progress_bar.value = 1
         self._show_files(self.files)
         self.status_text.value = f"扫描完成！共 {len(self.files)} 个文件，{len(self.plan)} 个待整理"
@@ -359,6 +367,7 @@ class FileOrganizerApp:
         self.btn_scan.disabled = False
         self.btn_scan.text = "扫描文件"
         self.btn_organize.disabled = not self.plan
+        self.btn_stats.disabled = not self.files
         self.progress_bar.value = 1
         self._show_files(self.files)
         self.status_text.value = f"扫描完成！共 {len(self.files)} 个文件，{len(self.plan)} 个待整理"
@@ -745,6 +754,139 @@ class FileOrganizerApp:
 
     def _update_status(self, text: str):
         self.status_text.value = text
+        self.page.update()
+
+    @staticmethod
+    def _format_size(size_bytes: int) -> str:
+        """格式化文件大小"""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 ** 2:
+            return f"{size_bytes / 1024:.1f} KB"
+        elif size_bytes < 1024 ** 3:
+            return f"{size_bytes / 1024 ** 2:.1f} MB"
+        else:
+            return f"{size_bytes / 1024 ** 3:.2f} GB"
+
+    def _on_show_stats(self, e):
+        """查看统计按钮"""
+        if not self.files:
+            return
+        self._show_statistics()
+
+    def _show_statistics(self):
+        """显示文件大小统计柱状图"""
+        # 统计每个分类的文件数量和总大小
+        cat_size: dict[str, int] = {}
+        cat_count: dict[str, int] = {}
+        for f in self.files:
+            cat = f.category or "其他"
+            cat_size[cat] = cat_size.get(cat, 0) + f.size
+            cat_count[cat] = cat_count.get(cat, 0) + 1
+
+        if not cat_size:
+            self._show_snackbar("没有文件数据", ft.Colors.ORANGE_700)
+            return
+
+        # 按大小排序
+        sorted_cats = sorted(cat_size.items(), key=lambda x: x[1], reverse=True)
+        max_size = sorted_cats[0][1] if sorted_cats else 1
+
+        # 颜色映射
+        bar_colors = {
+            "文档": ft.Colors.BLUE_400,
+            "图片": ft.Colors.PURPLE_400,
+            "视频": ft.Colors.RED_400,
+            "音乐": ft.Colors.AMBER_400,
+            "压缩包": ft.Colors.CYAN_400,
+            "代码": ft.Colors.GREEN_400,
+            "设计": ft.Colors.PINK_400,
+            "安装包": ft.Colors.ORANGE_400,
+            "其他": ft.Colors.GREY_400,
+        }
+
+        # 构建柱状图行
+        chart_rows = []
+        for cat, total in sorted_cats:
+            count = cat_count[cat]
+            ratio = total / max_size if max_size > 0 else 0
+            bar_color = bar_colors.get(cat, ft.Colors.GREY_400)
+
+            # 进度条样式的柱子
+            bar = ft.Container(
+                content=ft.Text(
+                    self._format_size(total),
+                    size=12,
+                    color=ft.Colors.WHITE,
+                    weight=ft.FontWeight.BOLD,
+                ),
+                alignment=ft.alignment.center_left,
+                padding=ft.Padding.only(left=8, top=0, right=0, bottom=0),
+                bgcolor=bar_color,
+                border_radius=6,
+                width=max(ratio * 360, 60),  # 最小宽度 60，最大 360
+                height=32,
+            )
+
+            row = ft.Row(
+                controls=[
+                    ft.Container(
+                        content=ft.Text(cat, size=14, weight=ft.FontWeight.BOLD),
+                        width=60,
+                        alignment=ft.alignment.center_left,
+                    ),
+                    bar,
+                    ft.Text(f"{count} 个", size=12, color=ft.Colors.GREY_600, width=50),
+                ],
+                spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+            chart_rows.append(row)
+
+        # 汇总信息
+        total_files = len(self.files)
+        total_size = sum(cat_size.values())
+
+        summary = ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Text(f"共 {total_files} 个文件", size=14, weight=ft.FontWeight.BOLD),
+                    ft.Text(f"总大小：{self._format_size(total_size)}", size=14, color=ft.Colors.GREY_600),
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            ),
+            bgcolor=ft.Colors.BLUE_50,
+            border_radius=8,
+            padding=16,
+            margin=ft.Margin.only(bottom=12, top=0, left=0, right=0),
+        )
+
+        chart_column = ft.Column(
+            controls=[summary] + chart_rows,
+            spacing=10,
+            scroll=ft.ScrollMode.AUTO,
+        )
+
+        def close_dialog(e):
+            dialog.open = False
+            self.page.update()
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("📊 文件大小统计", size=18, weight=ft.FontWeight.BOLD),
+            content=ft.Container(
+                content=chart_column,
+                width=520,
+                height=min(len(sorted_cats) * 48 + 80, 450),
+            ),
+            actions=[
+                ft.TextButton("关闭", on_click=close_dialog),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+
+        self.page.overlay.append(dialog)
+        dialog.open = True
         self.page.update()
 
     def _show_snackbar(self, message: str, color: str = ft.Colors.BLUE_700):
