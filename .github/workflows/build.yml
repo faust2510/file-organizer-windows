@@ -3,11 +3,11 @@ name: 打包 Windows 安装包
 on:
   push:
     tags:
-      - 'v*'          # 推送 v 开头的 tag 时触发，例如 v1.0.0
-  workflow_dispatch:   # 允许手动触发（Actions 页面点 Run）
+      - 'v*'
+  workflow_dispatch:
 
 permissions:
-  contents: write      # 需要写权限来创建 Release
+  contents: write
 
 jobs:
   build:
@@ -27,11 +27,9 @@ jobs:
       shell: bash
       run: |
         if [[ "${{ github.ref_type }}" == "tag" ]]; then
-          # 从 tag 提取版本号，例如 v1.2.3 -> 1.2.3
           VERSION="${{ github.ref_name }}"
           VERSION="${VERSION#v}"
         else
-          # 手动触发时，用日期作为版本号
           VERSION="$(date +'%Y%m%d').$(echo ${{ github.run_number }})"
         fi
         echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -50,23 +48,29 @@ jobs:
       shell: pwsh
       run: |
         $exeDir = "dist\妈妈文件整理助手"
-        # 创建启动 bat，方便双击运行
         @"
         @echo off
         cd /d "%~dp0"
         start "" "妈妈文件整理助手.exe"
         "@ | Out-File -FilePath "$exeDir\启动.bat" -Encoding ascii
 
-    - name: 安装 Inno Setup
-      run: choco install innosetup -y
+    - name: 安装 Inno Setup 并配置中文语言
+      shell: pwsh
+      run: |
+        choco install innosetup -y
+        # 下载中文语言文件到 Inno Setup 语言目录
+        $isccPath = "C:\Program Files (x86)\Inno Setup 6"
+        $langUrl = "https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/Unofficial/ChineseSimplified.isl"
+        $langFile = "$isccPath\Languages\ChineseSimplified.isl"
+        New-Item -ItemType Directory -Force -Path "$isccPath\Languages"
+        Invoke-WebRequest -Uri $langUrl -OutFile $langFile
+        Write-Host "✅ 中文语言文件已下载到: $langFile"
 
     - name: 打包安装程序
       shell: pwsh
       run: |
-        # 创建单文件 exe 用于安装包
         pyinstaller --noconfirm --onefile --windowed --name "妈妈文件整理助手" --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;." main_flet.py
         Copy-Item "dist\妈妈文件整理助手.exe" -Destination "dist\妈妈文件整理助手\妈妈文件整理助手.exe"
-        # 运行 Inno Setup
         iscc setup.iss /DMyAppVersion="${{ steps.version.outputs.version }}"
 
     - name: 压缩为 zip
@@ -98,23 +102,28 @@ jobs:
 
           ### 下载使用
 
-          1. 点击下方 **妈妈文件整理助手-Windows-v${{ steps.version.outputs.version }}.zip** 下载
-          2. 解压到任意文件夹（建议放桌面或 D 盘）
+          **方式一：安装包（推荐）**
+          1. 下载 `妈妈文件整理助手-Setup-${{ steps.version.outputs.version }}.exe`
+          2. 双击运行，一路点"下一步"
+          3. 桌面出现图标，双击就能用！
+
+          **方式二：便携版**
+          1. 下载 `妈妈文件整理助手-Windows-v${{ steps.version.outputs.version }}.zip`
+          2. 解压到任意文件夹
           3. 双击 `妈妈文件整理助手.exe` 即可运行
-          4. 也可以双击 `启动.bat` 运行
 
           ### 功能说明
 
-          - 自动扫描桌面、下载、文档三个文件夹
-          - 按文件类型自动分类（文档、图片、视频、音乐、压缩包等）
-          - 支持自定义分类规则
-          - 整理后的文件统一存放在 `~/OrganizedFiles/` 目录
+          - 选择任意文件夹进行整理
+          - 按文件类型自动细分分类（Word/PDF/Excel/图片/视频/音乐/压缩包等）
+          - 整理前预览，确认后执行
+          - 一键撤销功能，误操作可回退
+          - 全中文界面，大字体大按钮
 
           ### 注意事项
 
           - 首次运行可能需要等待几秒加载
           - 如果 Windows 提示"未知发布者"，点击"仍要运行"即可
-          - 建议不要放在 C 盘系统目录下
         files: |
           ${{ env.ZIP_PATH }}
           installer_output/妈妈文件整理助手-Setup-*.exe
