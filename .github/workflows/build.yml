@@ -57,6 +57,18 @@ jobs:
         start "" "妈妈文件整理助手.exe"
         "@ | Out-File -FilePath "$exeDir\启动.bat" -Encoding ascii
 
+    - name: 安装 Inno Setup
+      run: choco install innosetup -y
+
+    - name: 打包安装程序
+      shell: pwsh
+      run: |
+        # 创建单文件 exe 用于安装包
+        pyinstaller --noconfirm --onefile --windowed --name "妈妈文件整理助手" --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;." main_flet.py
+        Copy-Item "dist\妈妈文件整理助手.exe" -Destination "dist\妈妈文件整理助手\妈妈文件整理助手.exe"
+        # 运行 Inno Setup
+        iscc setup.iss /DMyAppVersion="${{ steps.version.outputs.version }}"
+
     - name: 压缩为 zip
       shell: pwsh
       run: |
@@ -103,4 +115,6 @@ jobs:
           - 首次运行可能需要等待几秒加载
           - 如果 Windows 提示"未知发布者"，点击"仍要运行"即可
           - 建议不要放在 C 盘系统目录下
-        files: ${{ env.ZIP_PATH }}
+        files: |
+          ${{ env.ZIP_PATH }}
+          installer_output/妈妈文件整理助手-Setup-*.exe
