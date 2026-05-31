@@ -36,6 +36,65 @@ def save_user_rules(rules: dict):
         json.dumps(rules, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
+
+def export_rules_to_json(file_path: str) -> bool:
+    """导出自定义规则到 JSON 文件"""
+    try:
+        rules = load_user_rules()
+        export_data = {
+            "version": "1.0",
+            "rules": [
+                {"extension": ext, "category": cat}
+                for ext, cat in sorted(rules.items())
+            ]
+        }
+        Path(file_path).write_text(
+            json.dumps(export_data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        return True
+    except Exception:
+        return False
+
+
+def import_rules_from_json(file_path: str) -> tuple[bool, str]:
+    """从 JSON 文件导入规则，返回 (成功, 消息)"""
+    try:
+        data = json.loads(Path(file_path).read_text(encoding="utf-8"))
+
+        # 兼容两种格式
+        if isinstance(data, list):
+            # 简单列表格式: [{"extension": ".xyz", "category": "文档"}, ...]
+            rules_list = data
+        elif isinstance(data, dict) and "rules" in data:
+            # 标准格式: {"version": "1.0", "rules": [...]}
+            rules_list = data["rules"]
+        else:
+            return False, "不支持的文件格式"
+
+        imported = {}
+        for item in rules_list:
+            ext = item.get("extension", "").strip()
+            cat = item.get("category", "").strip()
+            if ext and cat:
+                if not ext.startswith("."):
+                    ext = "." + ext
+                imported[ext] = cat
+
+        if not imported:
+            return False, "没有找到有效规则"
+
+        # 合并到现有规则
+        existing = load_user_rules()
+        existing.update(imported)
+        save_user_rules(existing)
+
+        return True, f"成功导入 {len(imported)} 条规则"
+    except json.JSONDecodeError:
+        return False, "文件格式错误（不是有效的 JSON）"
+    except Exception as e:
+        return False, f"导入失败：{str(e)}"
+
+
 # 扩展名 → 分类映射
 EXT_MAP = {
     # 文档
@@ -67,7 +126,7 @@ EXT_MAP = {
     ".sh": "代码", ".bat": "代码", ".ps1": "代码", ".sql": "代码",
     ".json": "代码", ".xml": "代码", ".yaml": "代码", ".yml": "代码",
     ".toml": "代码", ".ini": "代码", ".cfg": "代码",
-    ".mts": "代码", ".m2ts": "代码",  # TypeScript 用 .mts，不与视频 .ts 冲突
+    ".mts": "代码", ".m2ts": "代码",
     # 设计
     ".psd": "设计", ".ai": "设计", ".sketch": "设计", ".fig": "设计",
     ".xd": "设计", ".afdesign": "设计", ".afphoto": "设计",
@@ -76,7 +135,7 @@ EXT_MAP = {
     ".deb": "安装包", ".rpm": "安装包", ".appimage": "安装包",
 }
 
-# 扫描目录（Windows 路径，macOS 开发时自动适配）
+# 扫描目录
 def get_scan_dirs():
     """获取要扫描的目录列表"""
     home = Path.home()
@@ -102,7 +161,7 @@ IGNORE_DIRS = {
     "System Volume Information",
 }
 
-# 忽略的文件扩展名（系统/临时文件）
+# 忽略的文件扩展名
 IGNORE_EXTS = {
     ".tmp", ".temp", ".swp", ".swo", ".lnk", ".url",
 }
