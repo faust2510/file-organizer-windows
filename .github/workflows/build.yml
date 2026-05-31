@@ -38,11 +38,25 @@ jobs:
     - name: 安装依赖
       run: |
         python -m pip install --upgrade pip
-        pip install flet send2trash pyinstaller
+        pip install flet send2trash pillow
 
-    - name: 打包 exe (目录模式)
+    - name: 使用 flet pack 打包 exe（目录模式）
       run: |
-        pyinstaller --noconfirm --onedir --windowed --name "妈妈文件整理助手" --hidden-import flet --hidden-import flet_desktop --hidden-import flet_core --hidden-import flet_runtime --hidden-import flet.utils --hidden-import flet_desktop.window --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;." main_flet.py
+        flet pack main_flet.py --name "妈妈文件整理助手" --onedir --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;."
+
+    - name: 使用 flet pack 打包单文件 exe
+      run: |
+        flet pack main_flet.py --name "妈妈文件整理助手-single" --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;."
+
+    - name: 复制单文件到目录模式输出
+      shell: pwsh
+      run: |
+        $singleExe = "dist\妈妈文件整理助手-single.exe"
+        $targetDir = "dist\妈妈文件整理助手"
+        if (Test-Path $singleExe) {
+          Copy-Item $singleExe -Destination "$targetDir\妈妈文件整理助手.exe" -Force
+          Write-Host "✅ 已复制单文件 exe 到目录"
+        }
 
     - name: 添加启动脚本
       shell: pwsh
@@ -58,7 +72,6 @@ jobs:
       shell: pwsh
       run: |
         choco install innosetup -y
-        # 下载中文语言文件到 Inno Setup 语言目录
         $isccPath = "C:\Program Files (x86)\Inno Setup 6"
         $langUrl = "https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/Unofficial/ChineseSimplified.isl"
         $langFile = "$isccPath\Languages\ChineseSimplified.isl"
@@ -69,8 +82,6 @@ jobs:
     - name: 打包安装程序
       shell: pwsh
       run: |
-        pyinstaller --noconfirm --onefile --windowed --name "妈妈文件整理助手" --hidden-import flet --hidden-import flet_desktop --hidden-import flet_core --hidden-import flet_runtime --hidden-import flet.utils --hidden-import flet_desktop.window --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;." main_flet.py
-        Copy-Item "dist\妈妈文件整理助手.exe" -Destination "dist\妈妈文件整理助手\妈妈文件整理助手.exe"
         iscc setup.iss /DMyAppVersion="${{ steps.version.outputs.version }}"
 
     - name: 压缩为 zip
