@@ -41,27 +41,27 @@ jobs:
         pip install flet flet-desktop send2trash pyinstaller
 
     - name: 打包 exe
-      shell: pwsh
+      shell: bash
       env:
         PYTHONIOENCODING: utf-8
-        PYTHONUTF8: "1"
       run: |
-        python -m flet pack main_flet.py --name "妈妈文件整理助手" --icon icon.ico --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;."
+        flet pack main_flet.py --name "FileOrganizer" --icon icon.ico --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;."
 
     - name: 添加启动脚本
       shell: pwsh
       run: |
-        $exeDir = "dist\妈妈文件整理助手"
+        $exeDir = "dist\FileOrganizer"
         @"
         @echo off
         cd /d "%~dp0"
-        start "" "妈妈文件整理助手.exe"
+        start "" "FileOrganizer.exe"
         "@ | Out-File -FilePath "$exeDir\启动.bat" -Encoding ascii
 
     - name: 安装 Inno Setup 并配置中文语言
       shell: pwsh
       run: |
         choco install innosetup -y
+        # 下载中文语言文件到 Inno Setup 语言目录
         $isccPath = "C:\Program Files (x86)\Inno Setup 6"
         $langUrl = "https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/Unofficial/ChineseSimplified.isl"
         $langFile = "$isccPath\Languages\ChineseSimplified.isl"
@@ -71,18 +71,15 @@ jobs:
 
     - name: 打包安装程序
       shell: pwsh
-      env:
-        PYTHONIOENCODING: utf-8
-        PYTHONUTF8: "1"
       run: |
-        Copy-Item "dist\妈妈文件整理助手.exe" -Destination "dist\妈妈文件整理助手\妈妈文件整理助手.exe"
+        Copy-Item "dist\FileOrganizer.exe" -Destination "dist\FileOrganizer\FileOrganizer.exe"
         iscc setup.iss /DMyAppVersion="${{ steps.version.outputs.version }}"
 
     - name: 压缩为 zip
       shell: pwsh
       run: |
         $zipName = "妈妈文件整理助手-Windows-v${{ steps.version.outputs.version }}.zip"
-        Compress-Archive -Path "dist\妈妈文件整理助手\*" -DestinationPath $zipName
+        Compress-Archive -Path "dist\FileOrganizer\*" -DestinationPath $zipName
         echo "ZIP_PATH=$zipName" >> $env:GITHUB_ENV
         echo "📦 已创建: $zipName"
 
@@ -115,7 +112,7 @@ jobs:
           **方式二：便携版**
           1. 下载 `妈妈文件整理助手-Windows-v${{ steps.version.outputs.version }}.zip`
           2. 解压到任意文件夹
-          3. 双击 `妈妈文件整理助手.exe` 即可运行
+          3. 双击 `FileOrganizer.exe` 即可运行
 
           ### 功能说明
 
