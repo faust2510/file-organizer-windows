@@ -5,11 +5,7 @@ from pathlib import Path
 
 # 分类目录名
 CATEGORIES = {
-    "Word文档": "Word文档",
-    "PDF文档": "PDF文档",
-    "Excel表格": "Excel表格",
-    "PPT演示": "PPT演示",
-    "文本文件": "文本文件",
+    "文档": "文档",
     "图片": "图片",
     "视频": "视频",
     "音乐": "音乐",
@@ -42,18 +38,11 @@ def save_user_rules(rules: dict):
 
 # 扩展名 → 分类映射
 EXT_MAP = {
-    # Word文档
-    ".doc": "Word文档", ".docx": "Word文档",
-    # PDF文档
-    ".pdf": "PDF文档",
-    # Excel表格
-    ".xls": "Excel表格", ".xlsx": "Excel表格", ".csv": "Excel表格",
-    ".numbers": "Excel表格",
-    # PPT演示
-    ".ppt": "PPT演示", ".pptx": "PPT演示", ".key": "PPT演示",
-    # 文本文件
-    ".txt": "文本文件", ".md": "文本文件", ".rtf": "文本文件",
-    ".odt": "文本文件", ".epub": "文本文件", ".pages": "文本文件",
+    # 文档
+    ".doc": "文档", ".docx": "文档", ".pdf": "文档", ".txt": "文档",
+    ".rtf": "文档", ".odt": "文档", ".xls": "文档", ".xlsx": "文档",
+    ".ppt": "文档", ".pptx": "文档", ".csv": "文档", ".md": "文档",
+    ".epub": "文档", ".pages": "文档", ".numbers": "文档", ".key": "文档",
     # 图片
     ".jpg": "图片", ".jpeg": "图片", ".png": "图片", ".gif": "图片",
     ".bmp": "图片", ".webp": "图片", ".svg": "图片", ".ico": "图片",
@@ -78,7 +67,7 @@ EXT_MAP = {
     ".sh": "代码", ".bat": "代码", ".ps1": "代码", ".sql": "代码",
     ".json": "代码", ".xml": "代码", ".yaml": "代码", ".yml": "代码",
     ".toml": "代码", ".ini": "代码", ".cfg": "代码",
-    ".mts": "代码", ".m2ts": "代码",
+    ".mts": "代码", ".m2ts": "代码",  # TypeScript 用 .mts，不与视频 .ts 冲突
     # 设计
     ".psd": "设计", ".ai": "设计", ".sketch": "设计", ".fig": "设计",
     ".xd": "设计", ".afdesign": "设计", ".afphoto": "设计",
