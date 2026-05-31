@@ -50,7 +50,7 @@ jobs:
     - name: 添加启动脚本
       shell: pwsh
       run: |
-        $exeDir = "dist\FileOrganizer"
+        $exeDir = "dist"
         @"
         @echo off
         cd /d "%~dp0"
