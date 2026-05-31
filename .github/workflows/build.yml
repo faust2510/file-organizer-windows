@@ -45,7 +45,7 @@ jobs:
       env:
         PYTHONIOENCODING: utf-8
       run: |
-        flet pack main_flet.py --name "FileOrganizer" --icon icon.ico --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;."
+        flet pack main_flet.py --name "妈妈文件整理助手" --icon icon.ico --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;."
 
     - name: 添加启动脚本
       shell: pwsh
@@ -54,7 +54,7 @@ jobs:
         @"
         @echo off
         cd /d "%~dp0"
-        start "" "FileOrganizer.exe"
+        start "" "妈妈文件整理助手.exe"
         "@ | Out-File -FilePath "$exeDir\启动.bat" -Encoding ascii
 
     - name: 安装 Inno Setup 并配置中文语言
@@ -72,15 +72,15 @@ jobs:
     - name: 打包安装程序
       shell: pwsh
       run: |
-        New-Item -ItemType Directory -Force -Path "dist\FileOrganizer"
-        Copy-Item "dist\FileOrganizer.exe" -Destination "dist\FileOrganizer\FileOrganizer.exe"
+        New-Item -ItemType Directory -Force -Path "dist\妈妈文件整理助手"
+        Copy-Item "dist\妈妈文件整理助手.exe" -Destination "dist\妈妈文件整理助手\妈妈文件整理助手.exe"
         iscc setup.iss /DMyAppVersion="${{ steps.version.outputs.version }}"
 
     - name: 压缩为 zip
       shell: pwsh
       run: |
         $zipName = "妈妈文件整理助手-Windows-v${{ steps.version.outputs.version }}.zip"
-        Compress-Archive -Path "dist\FileOrganizer\*" -DestinationPath $zipName
+        Compress-Archive -Path "dist\妈妈文件整理助手\*" -DestinationPath $zipName
         echo "ZIP_PATH=$zipName" >> $env:GITHUB_ENV
         echo "📦 已创建: $zipName"
 
@@ -113,7 +113,7 @@ jobs:
           **方式二：便携版**
           1. 下载 `妈妈文件整理助手-Windows-v${{ steps.version.outputs.version }}.zip`
           2. 解压到任意文件夹
-          3. 双击 `FileOrganizer.exe` 即可运行
+          3. 双击 `妈妈文件整理助手.exe` 即可运行
 
           ### 功能说明
 
