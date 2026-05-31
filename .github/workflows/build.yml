@@ -40,9 +40,9 @@ jobs:
         python -m pip install --upgrade pip
         pip install flet send2trash pyinstaller
 
-    - name: 打包 exe
+    - name: 打包 exe (目录模式)
       run: |
-        pyinstaller --noconfirm --onedir --windowed --name "妈妈文件整理助手" --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;." main_flet.py
+        pyinstaller --noconfirm --onedir --windowed --name "妈妈文件整理助手" --hidden-import flet --hidden-import flet_desktop --hidden-import flet_core --hidden-import flet_runtime --hidden-import flet.utils --hidden-import flet_desktop.window --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;." main_flet.py
 
     - name: 添加启动脚本
       shell: pwsh
@@ -69,7 +69,7 @@ jobs:
     - name: 打包安装程序
       shell: pwsh
       run: |
-        pyinstaller --noconfirm --onefile --windowed --name "妈妈文件整理助手" --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;." main_flet.py
+        pyinstaller --noconfirm --onefile --windowed --name "妈妈文件整理助手" --hidden-import flet --hidden-import flet_desktop --hidden-import flet_core --hidden-import flet_runtime --hidden-import flet.utils --hidden-import flet_desktop.window --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;." main_flet.py
         Copy-Item "dist\妈妈文件整理助手.exe" -Destination "dist\妈妈文件整理助手\妈妈文件整理助手.exe"
         iscc setup.iss /DMyAppVersion="${{ steps.version.outputs.version }}"
 
