@@ -5,7 +5,7 @@
 #define MyAppVersion "1.0.0"
 #define MyAppPublisher "王佐"
 #define MyAppURL "https://github.com/faust2510/file-organizer-windows"
-#define MyAppExeName "妈妈文件整理助手.exe"
+#define MyAppExeName "FileOrganizer.exe"
 
 [Setup]
 AppId={{B1F2A3C4-D5E6-7890-ABCD-EF1234567890}
@@ -35,7 +35,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
-Source: "dist\妈妈文件整理助手\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
+Source: "dist\FileOrganizer\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion isreadme
 
 [Icons]
