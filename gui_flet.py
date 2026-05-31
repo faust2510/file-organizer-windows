@@ -3,10 +3,12 @@ import threading
 import flet as ft
 from pathlib import Path
 from collections import Counter
+import os
 
 from config import (
     get_scan_dirs, get_target_root, CATEGORIES, EXT_MAP,
     load_user_rules, save_user_rules,
+    export_rules_to_json, import_rules_from_json,
 )
 from organizer import FileScanner, FileClassifier, FileOrganizer, FileInfo
 from search import FileSearcher
@@ -19,7 +21,9 @@ class FileOrganizerApp:
         self.page = page
         self._setup_page()
         self._init_core()
+        self._init_file_pickers()
         self._build_ui()
+        self._setup_drop()
 
     def _setup_page(self):
         """页面基础设置"""
@@ -43,6 +47,33 @@ class FileOrganizerApp:
         self.plan: list[tuple[Path, Path]] = []
         self.is_scanning = False
         self.is_organizing = False
+
+    def _init_file_pickers(self):
+        """初始化文件选择器（用于规则导入导出）"""
+        self.export_picker = ft.FilePicker(on_result=self._on_export_result)
+        self.import_picker = ft.FilePicker(on_result=self._on_import_result)
+        self.page.overlay.append(self.export_picker)
+        self.page.overlay.append(self.import_picker)
+
+    def _on_export_result(self, e: ft.FilePickerResultEvent):
+        """导出规则回调"""
+        if e.path:
+            success = export_rules_to_json(e.path)
+            if success:
+                self._show_snackbar(f"规则已导出到：{e.path}", ft.Colors.GREEN_700)
+            else:
+                self._show_snackbar("导出失败", ft.Colors.RED_700)
+
+    def _on_import_result(self, e: ft.FilePickerResultEvent):
+        """导入规则回调"""
+        if e.files and len(e.files) > 0:
+            file_path = e.files[0].path
+            success, msg = import_rules_from_json(file_path)
+            color = ft.Colors.GREEN_700 if success else ft.Colors.RED_700
+            self._show_snackbar(msg, color)
+            # 如果导入成功且设置弹窗打开，刷新规则列表
+            if success:
+                self.page.update()
 
     def _build_ui(self):
         """构建主界面"""
@@ -127,6 +158,27 @@ class FileOrganizerApp:
             show_checkbox_column=False,
         )
 
+        # 拖拽区域
+        self.drop_zone = ft.Container(
+            content=ft.Column(
+                controls=[
+                    ft.Icon(ft.Icons.CLOUD_UPLOAD, size=48, color=ft.Colors.BLUE_300),
+                    ft.Text("拖拽文件或文件夹到这里", size=16, color=ft.Colors.GREY_500),
+                    ft.Text("支持从资源管理器直接拖入", size=12, color=ft.Colors.GREY_400),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                alignment=ft.MainAxisAlignment.CENTER,
+                spacing=8,
+            ),
+            alignment=ft.alignment.center,
+            border=ft.border.all(2, ft.Colors.BLUE_200),
+            border_radius=12,
+            bgcolor=ft.Colors.BLUE_50,
+            padding=32,
+            margin=ft.Margin.only(left=16, top=8, right=16, bottom=8),
+            height=120,
+        )
+
         # 进度条
         self.progress_bar = ft.ProgressBar(
             value=0,
@@ -146,6 +198,8 @@ class FileOrganizerApp:
         # 主布局
         self.page.add(
             self.appbar,
+            # 拖拽区域
+            self.drop_zone,
             # 工具栏
             ft.Container(
                 content=ft.Row(
@@ -185,6 +239,86 @@ class FileOrganizerApp:
                 bgcolor=ft.Colors.GREY_50,
             ),
         )
+
+    def _setup_drop(self):
+        """设置拖拽处理"""
+        self.page.on_drop = self._on_drop
+
+    def _on_drop(self, e: ft.FileDropEvent):
+        """拖拽文件/文件夹到窗口"""
+        if self.is_scanning:
+            return
+
+        dropped_files = e.files or []
+        if not dropped_files:
+            return
+
+        # 收集所有拖入的路径
+        scan_paths = []
+        for f in dropped_files:
+            p = Path(f.path)
+            if p.is_dir():
+                scan_paths.append(p)
+            elif p.is_file():
+                scan_paths.append(p)
+
+        if not scan_paths:
+            return
+
+        # 更新拖拽区域显示
+        self.drop_zone.content = ft.Column(
+            controls=[
+                ft.Icon(ft.Icons.CHECK_CIRCLE, size=36, color=ft.Colors.GREEN_500),
+                ft.Text(f"已拖入 {len(scan_paths)} 个项目", size=14, color=ft.Colors.GREEN_700),
+                ft.Text("正在扫描...", size=12, color=ft.Colors.GREY_500),
+            ],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ft.MainAxisAlignment.CENTER,
+            spacing=4,
+        )
+        self.drop_zone.border = ft.border.all(2, ft.Colors.GREEN_300)
+        self.drop_zone.bgcolor = ft.Colors.GREEN_50
+        self.page.update()
+
+        # 开始扫描拖入的路径
+        self.is_scanning = True
+        self.btn_scan.disabled = True
+        self.btn_scan.text = "扫描中..."
+        self.btn_organize.disabled = True
+        self.data_table.rows.clear()
+        self.files.clear()
+        self.plan.clear()
+        self.progress_bar.value = 0
+        self.status_text.value = f"正在扫描拖入的 {len(scan_paths)} 个项目..."
+        self.page.update()
+
+        threading.Thread(target=self._drop_scan_worker, args=(scan_paths,), daemon=True).start()
+
+    def _drop_scan_worker(self, scan_paths: list):
+        """后台扫描拖入的文件"""
+        count = [0]
+
+        def on_progress(n, path):
+            count[0] = n
+            self.page.run_thread(lambda: self._update_status(f"已扫描 {n} 个文件..."))
+
+        files = self.scanner.scan(scan_paths, progress_cb=on_progress)
+        files = self.classifier.classify_batch(files)
+        self.files = files
+        self.searcher.build_index(files)
+        self.plan = self.organizer.preview(files)
+        self.page.run_thread(self._drop_scan_done)
+
+    def _drop_scan_done(self):
+        """拖拽扫描完成"""
+        self.is_scanning = False
+        self.btn_scan.disabled = False
+        self.btn_scan.text = "扫描文件"
+        self.btn_organize.disabled = not self.plan
+        self.progress_bar.value = 1
+        self._show_files(self.files)
+        self.status_text.value = f"扫描完成！共 {len(self.files)} 个文件，{len(self.plan)} 个待整理"
+        self.page.update()
 
     def _on_scan(self, e):
         """扫描按钮"""
@@ -521,6 +655,21 @@ class FileOrganizerApp:
             ext_field.value = ""
             self.page.update()
 
+        def export_rules(e):
+            self.export_picker.save_file(
+                dialog_title="导出规则",
+                file_name="file-organizer-rules.json",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["json"],
+            )
+
+        def import_rules(e):
+            self.import_picker.pick_files(
+                dialog_title="导入规则",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["json"],
+            )
+
         def close_dialog(e):
             dialog.open = False
             self.page.update()
@@ -547,6 +696,25 @@ class FileOrganizerApp:
                             ),
                         ],
                         spacing=12,
+                    ),
+                    ft.Divider(),
+                    ft.Row(
+                        controls=[
+                            ft.FilledButton(
+                                "📤 导出规则",
+                                icon=ft.Icons.UPLOAD_FILE,
+                                style=ft.ButtonStyle(bgcolor=ft.Colors.TEAL_700, shape=ft.RoundedRectangleBorder(radius=8)),
+                                on_click=export_rules,
+                            ),
+                            ft.FilledButton(
+                                "📥 导入规则",
+                                icon=ft.Icons.DOWNLOAD,
+                                style=ft.ButtonStyle(bgcolor=ft.Colors.PURPLE_700, shape=ft.RoundedRectangleBorder(radius=8)),
+                                on_click=import_rules,
+                            ),
+                        ],
+                        spacing=12,
+                        alignment=ft.MainAxisAlignment.CENTER,
                     ),
                 ],
                 spacing=16,
