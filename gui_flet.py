@@ -1,8 +1,10 @@
 """妈妈文件整理助手 — Flet 0.85 现代化 UI"""
 import threading
+import time
 import flet as ft
 from pathlib import Path
 from collections import Counter
+from datetime import datetime, timedelta
 import os
 
 from config import (
@@ -21,6 +23,7 @@ class FileOrganizerApp:
         self.page = page
         self._setup_page()
         self._init_core()
+        self._init_filter_state()
         self._init_file_pickers()
         self._build_ui()
         self._setup_drop()
@@ -48,6 +51,22 @@ class FileOrganizerApp:
         self.is_scanning = False
         self.is_organizing = False
 
+    def _init_filter_state(self):
+        """初始化筛选和选择状态"""
+        # 当前筛选后的文件列表
+        self.filtered_files: list[FileInfo] = []
+        # 已勾选的文件路径集合
+        self.selected_paths: set[str] = set()
+        # 筛选面板是否展开
+        self.filter_expanded = False
+        # 分类筛选复选框状态
+        self.category_checks: dict[str, ft.Checkbox] = {}
+        # 大小筛选
+        self.size_min = 0
+        self.size_max = 0  # 0 = 不限
+        # 日期筛选（天数，0 = 不限）
+        self.date_days = 0
+
     def _init_file_pickers(self):
         """初始化文件选择器（用于规则导入导出）"""
         self.export_picker = ft.FilePicker(on_result=self._on_export_result)
@@ -71,7 +90,6 @@ class FileOrganizerApp:
             success, msg = import_rules_from_json(file_path)
             color = ft.Colors.GREEN_700 if success else ft.Colors.RED_700
             self._show_snackbar(msg, color)
-            # 如果导入成功且设置弹窗打开，刷新规则列表
             if success:
                 self.page.update()
 
@@ -112,13 +130,6 @@ class FileOrganizerApp:
             style=ft.ButtonStyle(padding=16, shape=ft.RoundedRectangleBorder(radius=8), bgcolor=ft.Colors.ORANGE_700),
             on_click=self._on_undo,
         )
-        self.btn_stats = ft.FilledButton(
-            "查看统计",
-            icon=ft.Icons.BAR_CHART,
-            style=ft.ButtonStyle(padding=16, shape=ft.RoundedRectangleBorder(radius=8), bgcolor=ft.Colors.PURPLE_700),
-            on_click=self._on_show_stats,
-            disabled=True,
-        )
 
         # 搜索框
         self.search_field = ft.TextField(
@@ -129,7 +140,7 @@ class FileOrganizerApp:
             on_change=self._apply_filter,
         )
 
-        # 分类筛选
+        # 分类筛选下拉框
         self.category_dropdown = ft.Dropdown(
             options=[ft.dropdown.Option("全部")] + [
                 ft.dropdown.Option(cat) for cat in CATEGORIES.keys()
@@ -140,11 +151,38 @@ class FileOrganizerApp:
             on_select=self._apply_filter,
         )
 
+        # ===== 筛选面板 =====
+        self._build_filter_panel()
+
+        # ===== 选择操作栏 =====
+        self.select_info_text = ft.Text("未选择文件", size=13, color=ft.Colors.GREY_600)
+        self.btn_select_all = ft.TextButton("全选", on_click=self._select_all)
+        self.btn_deselect_all = ft.TextButton("取消全选", on_click=self._deselect_all)
+
+        select_bar = ft.Container(
+            content=ft.Row(
+                controls=[
+                    self.select_info_text,
+                    ft.Container(expand=True),
+                    self.btn_select_all,
+                    self.btn_deselect_all,
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            ),
+            padding=ft.Padding.only(left=16, top=4, right=16, bottom=4),
+            bgcolor=ft.Colors.BLUE_50,
+            visible=False,  # 扫描后显示
+        )
+        self.select_bar = select_bar
+
         # 数据表格
         self.data_table = ft.DataTable(
             columns=[
+                # 空列给 checkbox 用
+                ft.DataColumn(ft.Text("", weight=ft.FontWeight.BOLD), numeric=False),
                 ft.DataColumn(ft.Text("文件名", weight=ft.FontWeight.BOLD)),
                 ft.DataColumn(ft.Text("分类", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("大小", weight=ft.FontWeight.BOLD), numeric=True),
                 ft.DataColumn(ft.Text("原路径", weight=ft.FontWeight.BOLD)),
                 ft.DataColumn(ft.Text("目标路径", weight=ft.FontWeight.BOLD)),
             ],
@@ -210,20 +248,28 @@ class FileOrganizerApp:
             # 工具栏
             ft.Container(
                 content=ft.Row(
-                    controls=[self.btn_scan, self.btn_organize, self.btn_undo, self.btn_stats],
+                    controls=[self.btn_scan, self.btn_organize, self.btn_undo],
                     spacing=12,
                 ),
                 padding=ft.Padding.only(left=16, top=12, right=16, bottom=12),
                 bgcolor=ft.Colors.GREY_50,
             ),
-            # 搜索 + 筛选
+            # 搜索 + 筛选按钮
             ft.Container(
                 content=ft.Row(
-                    controls=[self.search_field, self.category_dropdown],
+                    controls=[
+                        self.search_field,
+                        self.category_dropdown,
+                        self.btn_toggle_filter,
+                    ],
                     spacing=12,
                 ),
                 padding=ft.Padding.only(left=16, top=8, right=16, bottom=8),
             ),
+            # 筛选面板（可折叠）
+            self.filter_panel,
+            # 选择操作栏
+            select_bar,
             # 文件列表
             ft.Container(
                 content=ft.ListView(
@@ -247,6 +293,156 @@ class FileOrganizerApp:
             ),
         )
 
+    def _build_filter_panel(self):
+        """构建高级筛选面板"""
+        # 分类多选复选框
+        category_checks = []
+        for cat in CATEGORIES.keys():
+            cb = ft.Checkbox(label=cat, value=True, on_change=self._apply_filter)
+            self.category_checks[cat] = cb
+            category_checks.append(cb)
+
+        category_row = ft.Container(
+            content=ft.Row(controls=category_checks, wrap=True, spacing=8),
+            padding=8,
+        )
+
+        # 大小筛选
+        self.size_min_field = ft.TextField(
+            label="最小 (MB)", value="0", width=120, border_radius=8,
+            text_align=ft.TextAlign.RIGHT, on_change=self._apply_filter,
+        )
+        self.size_max_field = ft.TextField(
+            label="最大 (MB)", value="0", width=120, border_radius=8,
+            text_align=ft.TextAlign.RIGHT, on_change=self._apply_filter,
+            hint_text="0=不限",
+        )
+
+        size_row = ft.Row(
+            controls=[
+                ft.Text("文件大小：", size=13, weight=ft.FontWeight.BOLD),
+                self.size_min_field,
+                ft.Text("~", size=13),
+                self.size_max_field,
+                ft.Text("MB（0=不限）", size=12, color=ft.Colors.GREY_500),
+            ],
+            spacing=8,
+        )
+
+        # 日期筛选
+        self.date_dropdown = ft.Dropdown(
+            options=[
+                ft.dropdown.Option("0", "不限"),
+                ft.dropdown.Option("7", "最近 7 天"),
+                ft.dropdown.Option("30", "最近 30 天"),
+                ft.dropdown.Option("90", "最近 90 天"),
+                ft.dropdown.Option("365", "最近一年"),
+            ],
+            value="0",
+            width=150,
+            border_radius=8,
+            on_select=self._apply_filter,
+        )
+
+        date_row = ft.Row(
+            controls=[
+                ft.Text("修改日期：", size=13, weight=ft.FontWeight.BOLD),
+                self.date_dropdown,
+            ],
+            spacing=8,
+        )
+
+        # 筛选面板容器（默认隐藏）
+        self.filter_panel = ft.Container(
+            content=ft.Column(
+                controls=[
+                    ft.Text("📂 文件类型筛选", size=14, weight=ft.FontWeight.BOLD),
+                    category_row,
+                    ft.Divider(height=1),
+                    ft.Row(controls=[size_row, date_row], spacing=32, wrap=True),
+                ],
+                spacing=8,
+            ),
+            padding=ft.Padding.only(left=16, top=8, right=16, bottom=8),
+            margin=ft.Margin.only(left=16, top=0, right=16, bottom=8),
+            bgcolor=ft.Colors.GREY_50,
+            border_radius=8,
+            visible=False,
+        )
+
+        # 筛选按钮
+        self.btn_toggle_filter = ft.IconButton(
+            ft.Icons.FILTER_LIST,
+            tooltip="高级筛选",
+            on_click=self._toggle_filter_panel,
+        )
+
+    def _toggle_filter_panel(self, e=None):
+        """展开/收起筛选面板"""
+        self.filter_expanded = not self.filter_expanded
+        self.filter_panel.visible = self.filter_expanded
+        self.btn_toggle_filter.icon = (
+            ft.Icons.FILTER_LIST_OFF if self.filter_expanded else ft.Icons.FILTER_LIST
+        )
+        self.page.update()
+
+    def _get_selected_categories(self) -> set[str]:
+        """获取勾选的分类"""
+        return {cat for cat, cb in self.category_checks.items() if cb.value}
+
+    def _apply_filter(self, e=None):
+        """搜索 + 高级筛选"""
+        keyword = self.search_field.value or ""
+        category = self.category_dropdown.value or "全部"
+        selected_cats = self._get_selected_categories()
+
+        # 解析大小筛选
+        try:
+            size_min = float(self.size_min_field.value) * 1024 * 1024 if self.size_min_field.value else 0
+        except ValueError:
+            size_min = 0
+        try:
+            size_max = float(self.size_max_field.value) * 1024 * 1024 if self.size_max_field.value else 0
+        except ValueError:
+            size_max = 0
+
+        # 解析日期筛选
+        try:
+            date_days = int(self.date_dropdown.value)
+        except (ValueError, TypeError):
+            date_days = 0
+        date_cutoff = None
+        if date_days > 0:
+            date_cutoff = time.time() - date_days * 86400
+
+        # 先按搜索+分类筛选
+        if keyword or category != "全部":
+            results = self.searcher.search_combined(keyword=keyword, category=category)
+        else:
+            results = list(self.files)
+
+        # 应用高级筛选
+        filtered = []
+        for f in results:
+            # 分类筛选
+            if f.category not in selected_cats:
+                continue
+            # 大小筛选
+            if size_min > 0 and f.size < size_min:
+                continue
+            if size_max > 0 and f.size > size_max:
+                continue
+            # 日期筛选
+            if date_cutoff and f.mtime < date_cutoff:
+                continue
+            filtered.append(f)
+
+        self.filtered_files = filtered
+        self._show_files(filtered)
+        self._update_select_info()
+        self.status_text.value = f"显示 {len(filtered)} 个文件"
+        self.page.update()
+
     def _setup_drop(self):
         """设置拖拽处理"""
         self.page.on_drop = self._on_drop
@@ -260,7 +456,6 @@ class FileOrganizerApp:
         if not dropped_files:
             return
 
-        # 收集所有拖入的路径
         scan_paths = []
         for f in dropped_files:
             p = Path(f.path)
@@ -272,7 +467,6 @@ class FileOrganizerApp:
         if not scan_paths:
             return
 
-        # 更新拖拽区域显示
         self.drop_zone.content = ft.Column(
             controls=[
                 ft.Icon(ft.Icons.CHECK_CIRCLE, size=36, color=ft.Colors.GREEN_500),
@@ -287,7 +481,6 @@ class FileOrganizerApp:
         self.drop_zone.bgcolor = ft.Colors.GREEN_50
         self.page.update()
 
-        # 开始扫描拖入的路径
         self.is_scanning = True
         self.btn_scan.disabled = True
         self.btn_scan.text = "扫描中..."
@@ -295,6 +488,7 @@ class FileOrganizerApp:
         self.data_table.rows.clear()
         self.files.clear()
         self.plan.clear()
+        self.selected_paths.clear()
         self.progress_bar.value = 0
         self.status_text.value = f"正在扫描拖入的 {len(scan_paths)} 个项目..."
         self.page.update()
@@ -322,9 +516,13 @@ class FileOrganizerApp:
         self.btn_scan.disabled = False
         self.btn_scan.text = "扫描文件"
         self.btn_organize.disabled = not self.plan
-        self.btn_stats.disabled = not self.files
         self.progress_bar.value = 1
+        self.filtered_files = list(self.files)
+        # 默认全选
+        self.selected_paths = {str(f.path) for f in self.files}
+        self.select_bar.visible = True
         self._show_files(self.files)
+        self._update_select_info()
         self.status_text.value = f"扫描完成！共 {len(self.files)} 个文件，{len(self.plan)} 个待整理"
         self.page.update()
 
@@ -339,6 +537,7 @@ class FileOrganizerApp:
         self.data_table.rows.clear()
         self.files.clear()
         self.plan.clear()
+        self.selected_paths.clear()
         self.progress_bar.value = 0
         self.status_text.value = "正在扫描文件..."
         self.page.update()
@@ -367,24 +566,43 @@ class FileOrganizerApp:
         self.btn_scan.disabled = False
         self.btn_scan.text = "扫描文件"
         self.btn_organize.disabled = not self.plan
-        self.btn_stats.disabled = not self.files
         self.progress_bar.value = 1
+        self.filtered_files = list(self.files)
+        # 默认全选
+        self.selected_paths = {str(f.path) for f in self.files}
+        self.select_bar.visible = True
         self._show_files(self.files)
+        self._update_select_info()
         self.status_text.value = f"扫描完成！共 {len(self.files)} 个文件，{len(self.plan)} 个待整理"
         self.page.update()
 
     def _show_files(self, files: list[FileInfo]):
-        """显示文件列表"""
+        """显示文件列表（带勾选框）"""
         self.data_table.rows.clear()
         limit = 2000
         for f in files[:limit]:
+            path_str = str(f.path)
+            is_selected = path_str in self.selected_paths
             target = str(f.target_path) if f.target_path else ""
             source = str(f.path.parent)
+
+            # 勾选框
+            cb = ft.Checkbox(
+                value=is_selected,
+                data=path_str,  # 存储文件路径
+                on_change=self._on_file_check,
+            )
+
+            # 大小显示
+            size_str = self._format_size(f.size)
+
             self.data_table.rows.append(
                 ft.DataRow(
                     cells=[
+                        ft.DataCell(cb),
                         ft.DataCell(ft.Text(f.path.name, size=13)),
                         ft.DataCell(self._build_category_chip(f.category)),
+                        ft.DataCell(ft.Text(size_str, size=12, color=ft.Colors.GREY_600)),
                         ft.DataCell(ft.Text(source, size=12, color=ft.Colors.GREY_600)),
                         ft.DataCell(ft.Text(target, size=12, color=ft.Colors.GREY_600)),
                     ],
@@ -393,6 +611,56 @@ class FileOrganizerApp:
         if len(files) > limit:
             self.status_text.value = f"共 {len(files)} 个文件（仅显示前 {limit} 个，请用搜索筛选）"
         self.page.update()
+
+    def _on_file_check(self, e):
+        """单个文件勾选/取消"""
+        path_str = e.control.data
+        if e.control.value:
+            self.selected_paths.add(path_str)
+        else:
+            self.selected_paths.discard(path_str)
+        self._update_select_info()
+        self.page.update()
+
+    def _select_all(self, e=None):
+        """全选当前筛选结果"""
+        for f in self.filtered_files:
+            self.selected_paths.add(str(f.path))
+        self._show_files(self.filtered_files)
+        self._update_select_info()
+        self.page.update()
+
+    def _deselect_all(self, e=None):
+        """取消全选"""
+        for f in self.filtered_files:
+            self.selected_paths.discard(str(f.path))
+        self._show_files(self.filtered_files)
+        self._update_select_info()
+        self.page.update()
+
+    def _update_select_info(self):
+        """更新选择信息"""
+        total = len(self.filtered_files)
+        selected = sum(1 for f in self.filtered_files if str(f.path) in self.selected_paths)
+        self.select_info_text.value = f"已选择 {selected}/{total} 个文件"
+
+        # 更新整理按钮状态：有选中文件才能整理
+        selected_plan = [
+            (src, dst) for src, dst in self.plan
+            if str(src) in self.selected_paths
+        ]
+        self.btn_organize.disabled = len(selected_plan) == 0
+
+    def _format_size(self, size: int) -> str:
+        """格式化文件大小"""
+        if size < 1024:
+            return f"{size} B"
+        elif size < 1024 * 1024:
+            return f"{size / 1024:.1f} KB"
+        elif size < 1024 * 1024 * 1024:
+            return f"{size / (1024 * 1024):.1f} MB"
+        else:
+            return f"{size / (1024 * 1024 * 1024):.1f} GB"
 
     def _build_category_chip(self, category: str):
         """分类标签"""
@@ -414,30 +682,35 @@ class FileOrganizerApp:
             border_radius=4,
         )
 
-    def _apply_filter(self, e=None):
-        """搜索 + 分类筛选"""
-        keyword = self.search_field.value or ""
-        category = self.category_dropdown.value or "全部"
-        results = self.searcher.search_combined(keyword=keyword, category=category)
-        self._show_files(results)
-        self.status_text.value = f"显示 {len(results)} 个文件"
-        self.page.update()
-
     def _on_organize(self, e):
-        """整理按钮"""
+        """整理按钮 — 只整理已勾选的文件"""
         if not self.plan:
             self._show_snackbar("没有需要整理的文件", ft.Colors.ORANGE_700)
             return
-        self._show_preview()
 
-    def _show_preview(self):
+        # 过滤出已选文件的 plan
+        selected_plan = [
+            (src, dst) for src, dst in self.plan
+            if str(src) in self.selected_paths
+        ]
+
+        if not selected_plan:
+            self._show_snackbar("请先勾选要整理的文件", ft.Colors.ORANGE_700)
+            return
+
+        self._show_preview(selected_plan)
+
+    def _show_preview(self, plan=None):
         """整理前预览"""
+        if plan is None:
+            plan = self.plan
+
         cat_counter = Counter()
-        for src, dst in self.plan:
+        for src, dst in plan:
             parts = dst.relative_to(get_target_root()).parts
             cat_counter[parts[0]] += 1
 
-        total = len(self.plan)
+        total = len(plan)
         target = get_target_root()
 
         category_list = ft.Column(
@@ -454,7 +727,7 @@ class FileOrganizerApp:
         def on_confirm(e):
             dialog.open = False
             self.page.update()
-            self._start_organize()
+            self._start_organize(plan)
 
         def on_cancel(e):
             dialog.open = False
@@ -491,8 +764,12 @@ class FileOrganizerApp:
         dialog.open = True
         self.page.update()
 
-    def _start_organize(self):
+    def _start_organize(self, plan=None):
         """开始整理"""
+        if plan is None:
+            plan = self.plan
+
+        self._current_plan = plan
         self.is_organizing = True
         self.btn_organize.disabled = True
         self.btn_organize.text = "整理中..."
@@ -506,13 +783,14 @@ class FileOrganizerApp:
     def _organize_worker(self):
         """后台整理"""
         log_path = get_target_root() / "organize_log.json"
+        plan = self._current_plan
 
         def on_progress(current, total):
             ratio = current / total if total > 0 else 0
             self.page.run_thread(lambda: self._update_progress(ratio))
             self.page.run_thread(lambda: self._update_status(f"正在整理... {current}/{total}"))
 
-        result = self.organizer.execute(self.plan, log_path=log_path, progress_cb=on_progress)
+        result = self.organizer.execute(plan, log_path=log_path, progress_cb=on_progress)
         self.organize_result = result
         self.page.run_thread(self._organize_done)
 
@@ -534,6 +812,9 @@ class FileOrganizerApp:
         self.data_table.rows.clear()
         self.files.clear()
         self.plan.clear()
+        self.selected_paths.clear()
+        self.filtered_files.clear()
+        self.select_bar.visible = False
         self.page.update()
 
     def _on_undo(self, e):
@@ -754,139 +1035,6 @@ class FileOrganizerApp:
 
     def _update_status(self, text: str):
         self.status_text.value = text
-        self.page.update()
-
-    @staticmethod
-    def _format_size(size_bytes: int) -> str:
-        """格式化文件大小"""
-        if size_bytes < 1024:
-            return f"{size_bytes} B"
-        elif size_bytes < 1024 ** 2:
-            return f"{size_bytes / 1024:.1f} KB"
-        elif size_bytes < 1024 ** 3:
-            return f"{size_bytes / 1024 ** 2:.1f} MB"
-        else:
-            return f"{size_bytes / 1024 ** 3:.2f} GB"
-
-    def _on_show_stats(self, e):
-        """查看统计按钮"""
-        if not self.files:
-            return
-        self._show_statistics()
-
-    def _show_statistics(self):
-        """显示文件大小统计柱状图"""
-        # 统计每个分类的文件数量和总大小
-        cat_size: dict[str, int] = {}
-        cat_count: dict[str, int] = {}
-        for f in self.files:
-            cat = f.category or "其他"
-            cat_size[cat] = cat_size.get(cat, 0) + f.size
-            cat_count[cat] = cat_count.get(cat, 0) + 1
-
-        if not cat_size:
-            self._show_snackbar("没有文件数据", ft.Colors.ORANGE_700)
-            return
-
-        # 按大小排序
-        sorted_cats = sorted(cat_size.items(), key=lambda x: x[1], reverse=True)
-        max_size = sorted_cats[0][1] if sorted_cats else 1
-
-        # 颜色映射
-        bar_colors = {
-            "文档": ft.Colors.BLUE_400,
-            "图片": ft.Colors.PURPLE_400,
-            "视频": ft.Colors.RED_400,
-            "音乐": ft.Colors.AMBER_400,
-            "压缩包": ft.Colors.CYAN_400,
-            "代码": ft.Colors.GREEN_400,
-            "设计": ft.Colors.PINK_400,
-            "安装包": ft.Colors.ORANGE_400,
-            "其他": ft.Colors.GREY_400,
-        }
-
-        # 构建柱状图行
-        chart_rows = []
-        for cat, total in sorted_cats:
-            count = cat_count[cat]
-            ratio = total / max_size if max_size > 0 else 0
-            bar_color = bar_colors.get(cat, ft.Colors.GREY_400)
-
-            # 进度条样式的柱子
-            bar = ft.Container(
-                content=ft.Text(
-                    self._format_size(total),
-                    size=12,
-                    color=ft.Colors.WHITE,
-                    weight=ft.FontWeight.BOLD,
-                ),
-                alignment=ft.alignment.center_left,
-                padding=ft.Padding.only(left=8, top=0, right=0, bottom=0),
-                bgcolor=bar_color,
-                border_radius=6,
-                width=max(ratio * 360, 60),  # 最小宽度 60，最大 360
-                height=32,
-            )
-
-            row = ft.Row(
-                controls=[
-                    ft.Container(
-                        content=ft.Text(cat, size=14, weight=ft.FontWeight.BOLD),
-                        width=60,
-                        alignment=ft.alignment.center_left,
-                    ),
-                    bar,
-                    ft.Text(f"{count} 个", size=12, color=ft.Colors.GREY_600, width=50),
-                ],
-                spacing=8,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            )
-            chart_rows.append(row)
-
-        # 汇总信息
-        total_files = len(self.files)
-        total_size = sum(cat_size.values())
-
-        summary = ft.Container(
-            content=ft.Row(
-                controls=[
-                    ft.Text(f"共 {total_files} 个文件", size=14, weight=ft.FontWeight.BOLD),
-                    ft.Text(f"总大小：{self._format_size(total_size)}", size=14, color=ft.Colors.GREY_600),
-                ],
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            ),
-            bgcolor=ft.Colors.BLUE_50,
-            border_radius=8,
-            padding=16,
-            margin=ft.Margin.only(bottom=12, top=0, left=0, right=0),
-        )
-
-        chart_column = ft.Column(
-            controls=[summary] + chart_rows,
-            spacing=10,
-            scroll=ft.ScrollMode.AUTO,
-        )
-
-        def close_dialog(e):
-            dialog.open = False
-            self.page.update()
-
-        dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Text("📊 文件大小统计", size=18, weight=ft.FontWeight.BOLD),
-            content=ft.Container(
-                content=chart_column,
-                width=520,
-                height=min(len(sorted_cats) * 48 + 80, 450),
-            ),
-            actions=[
-                ft.TextButton("关闭", on_click=close_dialog),
-            ],
-            actions_alignment=ft.MainAxisAlignment.END,
-        )
-
-        self.page.overlay.append(dialog)
-        dialog.open = True
         self.page.update()
 
     def _show_snackbar(self, message: str, color: str = ft.Colors.BLUE_700):
