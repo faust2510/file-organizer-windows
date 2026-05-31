@@ -40,8 +40,11 @@ jobs:
         python -m pip install --upgrade pip
         pip install flet send2trash pillow pyinstaller
 
-    - name: 使用 flet pack 打包 exe（目录模式）
+    - name: 使用 flet pack 打包 exe
+      shell: pwsh
       run: |
+        $env:PYTHONIOENCODING = "utf-8"
+        $env:PYTHONUTF8 = "1"
         flet pack main_flet.py --name "妈妈文件整理助手" --onedir --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;."
 
     - name: 添加启动脚本
