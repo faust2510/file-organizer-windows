@@ -38,14 +38,11 @@ jobs:
     - name: 安装依赖
       run: |
         python -m pip install --upgrade pip
-        pip install flet send2trash pillow pyinstaller
+        pip install flet flet-desktop send2trash
 
-    - name: 使用 flet pack 打包 exe
-      shell: pwsh
+    - name: 打包 exe (目录模式)
       run: |
-        $env:PYTHONIOENCODING = "utf-8"
-        $env:PYTHONUTF8 = "1"
-        flet pack main_flet.py --name "妈妈文件整理助手" --onedir --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;."
+        flet pack main_flet.py --name "妈妈文件整理助手" --icon icon.ico --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;."
 
     - name: 添加启动脚本
       shell: pwsh
@@ -61,6 +58,7 @@ jobs:
       shell: pwsh
       run: |
         choco install innosetup -y
+        # 下载中文语言文件到 Inno Setup 语言目录
         $isccPath = "C:\Program Files (x86)\Inno Setup 6"
         $langUrl = "https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/Unofficial/ChineseSimplified.isl"
         $langFile = "$isccPath\Languages\ChineseSimplified.isl"
@@ -71,6 +69,8 @@ jobs:
     - name: 打包安装程序
       shell: pwsh
       run: |
+        flet pack main_flet.py --name "妈妈文件整理助手" --icon icon.ico --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;."
+        Copy-Item "dist\妈妈文件整理助手.exe" -Destination "dist\妈妈文件整理助手\妈妈文件整理助手.exe"
         iscc setup.iss /DMyAppVersion="${{ steps.version.outputs.version }}"
 
     - name: 压缩为 zip
