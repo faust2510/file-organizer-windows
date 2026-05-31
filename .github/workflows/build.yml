@@ -42,7 +42,9 @@ jobs:
 
     - name: 打包 exe (目录模式)
       run: |
-        flet pack main_flet.py --name "妈妈文件整理助手" --icon icon.ico --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;."
+        flet pack main_flet.py --name "FileOrganizer" --icon icon.ico
+        env:
+          PYTHONIOENCODING: utf-8 --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;."
 
     - name: 添加启动脚本
       shell: pwsh
@@ -69,7 +71,9 @@ jobs:
     - name: 打包安装程序
       shell: pwsh
       run: |
-        flet pack main_flet.py --name "妈妈文件整理助手" --icon icon.ico --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;."
+        flet pack main_flet.py --name "FileOrganizer" --icon icon.ico
+        env:
+          PYTHONIOENCODING: utf-8 --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;."
         Copy-Item "dist\妈妈文件整理助手.exe" -Destination "dist\妈妈文件整理助手\妈妈文件整理助手.exe"
         iscc setup.iss /DMyAppVersion="${{ steps.version.outputs.version }}"
 
