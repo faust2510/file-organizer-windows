@@ -7,7 +7,6 @@ from collections import Counter
 from config import (
     get_scan_dirs, get_target_root, CATEGORIES, EXT_MAP,
     load_user_rules, save_user_rules,
-    export_rules_to_json, import_rules_from_json,
 )
 from organizer import FileScanner, FileClassifier, FileOrganizer, FileInfo
 from search import FileSearcher
@@ -20,7 +19,6 @@ class FileOrganizerApp:
         self.page = page
         self._setup_page()
         self._init_core()
-        self._init_file_pickers()
         self._build_ui()
 
     def _setup_page(self):
@@ -45,33 +43,6 @@ class FileOrganizerApp:
         self.plan: list[tuple[Path, Path]] = []
         self.is_scanning = False
         self.is_organizing = False
-
-    def _init_file_pickers(self):
-        """初始化文件选择器（用于规则导入导出）"""
-        self.export_picker = ft.FilePicker(on_result=self._on_export_result)
-        self.import_picker = ft.FilePicker(on_result=self._on_import_result)
-        self.page.overlay.append(self.export_picker)
-        self.page.overlay.append(self.import_picker)
-
-    def _on_export_result(self, e: ft.FilePickerResultEvent):
-        """导出规则回调"""
-        if e.path:
-            success = export_rules_to_json(e.path)
-            if success:
-                self._show_snackbar(f"规则已导出到：{e.path}", ft.Colors.GREEN_700)
-            else:
-                self._show_snackbar("导出失败", ft.Colors.RED_700)
-
-    def _on_import_result(self, e: ft.FilePickerResultEvent):
-        """导入规则回调"""
-        if e.files and len(e.files) > 0:
-            file_path = e.files[0].path
-            success, msg = import_rules_from_json(file_path)
-            color = ft.Colors.GREEN_700 if success else ft.Colors.RED_700
-            self._show_snackbar(msg, color)
-            # 如果导入成功且设置弹窗打开，刷新规则列表
-            if success:
-                self.page.update()
 
     def _build_ui(self):
         """构建主界面"""
@@ -550,21 +521,6 @@ class FileOrganizerApp:
             ext_field.value = ""
             self.page.update()
 
-        def export_rules(e):
-            self.export_picker.save_file(
-                dialog_title="导出规则",
-                file_name="file-organizer-rules.json",
-                file_type=ft.FilePickerFileType.CUSTOM,
-                allowed_extensions=["json"],
-            )
-
-        def import_rules(e):
-            self.import_picker.pick_files(
-                dialog_title="导入规则",
-                file_type=ft.FilePickerFileType.CUSTOM,
-                allowed_extensions=["json"],
-            )
-
         def close_dialog(e):
             dialog.open = False
             self.page.update()
@@ -591,25 +547,6 @@ class FileOrganizerApp:
                             ),
                         ],
                         spacing=12,
-                    ),
-                    ft.Divider(),
-                    ft.Row(
-                        controls=[
-                            ft.FilledButton(
-                                "📤 导出规则",
-                                icon=ft.Icons.UPLOAD_FILE,
-                                style=ft.ButtonStyle(bgcolor=ft.Colors.TEAL_700, shape=ft.RoundedRectangleBorder(radius=8)),
-                                on_click=export_rules,
-                            ),
-                            ft.FilledButton(
-                                "📥 导入规则",
-                                icon=ft.Icons.DOWNLOAD,
-                                style=ft.ButtonStyle(bgcolor=ft.Colors.PURPLE_700, shape=ft.RoundedRectangleBorder(radius=8)),
-                                on_click=import_rules,
-                            ),
-                        ],
-                        spacing=12,
-                        alignment=ft.MainAxisAlignment.CENTER,
                     ),
                 ],
                 spacing=16,
