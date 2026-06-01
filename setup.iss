@@ -1,7 +1,7 @@
-; 妈妈文件整理助手 - Inno Setup 安装脚本
+; 智能文件整理助手 - Inno Setup 安装脚本
 ; 编译环境：Inno Setup 6.x
 
-#define MyAppName "妈妈文件整理助手"
+#define MyAppName "智能文件整理助手"
 #define MyAppVersion "1.0.0"
 #define MyAppPublisher "王佐"
 #define MyAppURL "https://github.com/faust2510/file-organizer-windows"
@@ -19,7 +19,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir=installer_output
-OutputBaseFilename=妈妈文件整理助手-Setup-{#MyAppVersion}
+OutputBaseFilename=智能文件整理助手-Setup-{#MyAppVersion}
 SetupIconFile=icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes
