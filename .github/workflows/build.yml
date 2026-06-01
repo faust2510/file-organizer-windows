@@ -79,7 +79,7 @@ jobs:
     - name: 压缩为 zip
       shell: pwsh
       run: |
-        $zipName = "妈妈文件整理助手-Windows-v${{ steps.version.outputs.version }}.zip"
+        $zipName = "智能文件整理助手-Windows-v${{ steps.version.outputs.version }}.zip"
         Compress-Archive -Path "dist\FileOrganizer\*" -DestinationPath $zipName
         echo "ZIP_PATH=$zipName" >> $env:GITHUB_ENV
         echo "📦 已创建: $zipName"
@@ -87,31 +87,31 @@ jobs:
     - name: 上传构建产物
       uses: actions/upload-artifact@v4
       with:
-        name: 妈妈文件整理助手-Windows
-        path: 妈妈文件整理助手-Windows-v*.zip
+        name: 智能文件整理助手-Windows
+        path: 智能文件整理助手-Windows-v*.zip
         retention-days: 30
 
     - name: 创建 GitHub Release
       if: startsWith(github.ref, 'refs/tags/v')
       uses: softprops/action-gh-release@v2
       with:
-        name: "妈妈文件整理助手-v${{ steps.version.outputs.version }}"
+        name: "智能文件整理助手-v${{ steps.version.outputs.version }}"
         tag_name: ${{ github.ref_name }}
         generate_release_notes: false
         body: |
-          ## 妈妈文件整理助手 v${{ steps.version.outputs.version }}
+          ## 智能文件整理助手 v${{ steps.version.outputs.version }}
 
           一键整理电脑文件，自动分类到对应文件夹。
 
           ### 下载使用
 
           **方式一：安装包（推荐）**
-          1. 下载 `妈妈文件整理助手-Setup-${{ steps.version.outputs.version }}.exe`
+          1. 下载 `智能文件整理助手-Setup-${{ steps.version.outputs.version }}.exe`
           2. 双击运行，一路点"下一步"
           3. 桌面出现图标，双击就能用！
 
           **方式二：便携版**
-          1. 下载 `妈妈文件整理助手-Windows-v${{ steps.version.outputs.version }}.zip`
+          1. 下载 `智能文件整理助手-Windows-v${{ steps.version.outputs.version }}.zip`
           2. 解压到任意文件夹
           3. 双击 `FileOrganizer.exe` 即可运行
 
@@ -129,4 +129,4 @@ jobs:
           - 如果 Windows 提示"未知发布者"，点击"仍要运行"即可
         files: |
           ${{ env.ZIP_PATH }}
-          installer_output/妈妈文件整理助手-Setup-*.exe
+          installer_output/智能文件整理助手-Setup-*.exe
