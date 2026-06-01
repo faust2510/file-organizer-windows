@@ -3,7 +3,12 @@ name: 打包 Windows 安装包
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:  # 允许手动触发
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -18,22 +23,69 @@ jobs:
       with:
         python-version: '3.11'
 
+    - name: 确定版本号
+      id: version
+      shell: bash
+      run: |
+        if [[ "${{ github.ref_type }}" == "tag" ]]; then
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+        else
+          VERSION="$(date +'%Y%m%d').$(echo ${{ github.run_number }})"
+        fi
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        echo "📌 版本号: $VERSION"
+
     - name: 安装依赖
       run: |
         python -m pip install --upgrade pip
-        pip install flet send2trash pyinstaller
+        pip install flet flet-desktop send2trash pyinstaller
 
     - name: 打包 exe
+      shell: bash
+      env:
+        PYTHONIOENCODING: utf-8
       run: |
-        pyinstaller --noconfirm --onedir --windowed --name "妈妈文件整理助手" --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;." main_flet.py
+        flet pack main_flet.py --name "智能文件整理助手" --add-data "config.py;." --add-data "organizer.py;." --add-data "search.py;." --add-data "gui_flet.py;."
 
     - name: 压缩为 zip
+      shell: pwsh
       run: |
-        Compress-Archive -Path "dist\妈妈文件整理助手" -DestinationPath "妈妈文件整理助手-Windows.zip"
+        $zipName = "智能文件整理助手-Windows-v${{ steps.version.outputs.version }}.zip"
+        Compress-Archive -Path "dist\*" -DestinationPath $zipName
+        echo "ZIP_PATH=$zipName" >> $env:GITHUB_ENV
 
     - name: 上传构建产物
       uses: actions/upload-artifact@v4
       with:
-        name: 妈妈文件整理助手-Windows
-        path: 妈妈文件整理助手-Windows.zip
+        name: 智能文件整理助手-Windows
+        path: 智能文件整理助手-Windows-v*.zip
         retention-days: 30
+
+    - name: 创建 GitHub Release
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        name: "智能文件整理助手-v${{ steps.version.outputs.version }}"
+        tag_name: ${{ github.ref_name }}
+        generate_release_notes: false
+        body: |
+          ## 智能文件整理助手 v${{ steps.version.outputs.version }}
+
+          一键整理电脑文件，自动分类到对应文件夹。
+
+          ### 下载使用
+
+          1. 下载 `智能文件整理助手-Windows-v${{ steps.version.outputs.version }}.zip`
+          2. 解压到任意文件夹
+          3. 双击 `智能文件整理助手.exe` 即可运行
+
+          ### 功能说明
+
+          - 选择任意文件夹进行整理
+          - 按文件类型自动细分分类
+          - 整理前预览，确认后执行
+          - 一键撤销功能
+          - 全中文界面，大字体大按钮
+        files: |
+          ${{ env.ZIP_PATH }}
