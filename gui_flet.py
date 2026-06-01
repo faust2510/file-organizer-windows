@@ -1,4 +1,4 @@
-"""妈妈文件整理助手 — Flet 0.85 现代化 UI"""
+"""智能文件整理助手 — Flet 0.85 现代化 UI"""
 import threading
 import flet as ft
 from pathlib import Path
@@ -23,7 +23,7 @@ class FileOrganizerApp:
 
     def _setup_page(self):
         """页面基础设置"""
-        self.page.title = "妈妈文件整理助手"
+        self.page.title = "智能文件整理助手"
         self.page.theme_mode = ft.ThemeMode.LIGHT
         self.page.theme = ft.Theme(
             color_scheme_seed=ft.Colors.BLUE,
@@ -53,7 +53,7 @@ class FileOrganizerApp:
         """构建主界面"""
         # 顶部应用栏
         self.appbar = ft.AppBar(
-            title=ft.Text("妈妈文件整理助手", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+            title=ft.Text("智能文件整理助手", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
             center_title=False,
             bgcolor=ft.Colors.BLUE_700,
             actions=[
