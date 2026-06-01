@@ -1,8 +1,20 @@
-"""妈妈文件整理助手 — Flet 0.85 现代化 UI"""
+"""智能文件整理助手 — Flet 0.85 现代化 UI"""
 import threading
+import tkinter as tk
+from tkinter import filedialog
 import flet as ft
 from pathlib import Path
 from collections import Counter
+
+
+def _pick_folder(title="选择文件夹"):
+    """用 tkinter 文件选择器选择文件夹"""
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes('-topmost', True)
+    folder = filedialog.askdirectory(title=title, parent=root)
+    root.destroy()
+    return folder if folder else None
 
 from config import (
     get_scan_dirs, get_target_root, CATEGORIES, EXT_MAP,
@@ -23,7 +35,7 @@ class FileOrganizerApp:
 
     def _setup_page(self):
         """页面基础设置"""
-        self.page.title = "妈妈文件整理助手"
+        self.page.title = "智能文件整理助手"
         self.page.theme_mode = ft.ThemeMode.LIGHT
         self.page.theme = ft.Theme(
             color_scheme_seed=ft.Colors.BLUE,
@@ -44,11 +56,19 @@ class FileOrganizerApp:
         self.is_scanning = False
         self.is_organizing = False
 
+        # 自定义扫描目录列表（None 表示使用默认）
+        self.custom_scan_dirs: list[str] | None = None
+
+        # 自定义目标目录：{文件原路径: 新目标目录}
+        self.custom_targets: dict[str, str] = {}
+        # 当前正在修改目标的文件索引
+        self._editing_plan_index: int | None = None
+
     def _build_ui(self):
         """构建主界面"""
         # 顶部应用栏
         self.appbar = ft.AppBar(
-            title=ft.Text("妈妈文件整理助手", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+            title=ft.Text("智能文件整理助手", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
             center_title=False,
             bgcolor=ft.Colors.BLUE_700,
             actions=[
@@ -80,6 +100,28 @@ class FileOrganizerApp:
             icon=ft.Icons.UNDO,
             style=ft.ButtonStyle(padding=16, shape=ft.RoundedRectangleBorder(radius=8), bgcolor=ft.Colors.ORANGE_700),
             on_click=self._on_undo,
+        )
+        self.btn_change_root = ft.OutlinedButton(
+            "更改目标目录",
+            icon=ft.Icons.FOLDER_SPECIAL,
+            style=ft.ButtonStyle(padding=16, shape=ft.RoundedRectangleBorder(radius=8)),
+            on_click=self._on_change_root,
+            tooltip="更改整理目标根目录",
+        )
+        self.btn_select_scan_dirs = ft.OutlinedButton(
+            "选择扫描目录",
+            icon=ft.Icons.FOLDER_OPEN,
+            style=ft.ButtonStyle(padding=16, shape=ft.RoundedRectangleBorder(radius=8)),
+            on_click=self._on_select_scan_dirs,
+            tooltip="自定义扫描哪些文件夹",
+        )
+        self.btn_reset_scan_dirs = ft.OutlinedButton(
+            "恢复默认",
+            icon=ft.Icons.REFRESH,
+            style=ft.ButtonStyle(padding=16, shape=ft.RoundedRectangleBorder(radius=8)),
+            on_click=self._on_reset_scan_dirs,
+            tooltip="恢复默认扫描目录",
+            visible=False,
         )
 
         # 搜索框
@@ -127,6 +169,15 @@ class FileOrganizerApp:
             show_checkbox_column=False,
         )
 
+        # 文件选择器已改用 tkinter（Flet 0.85 桌面端不支持 FilePicker）
+
+        # 扫描目录显示区域
+        self.scan_dirs_text = ft.Text(
+            "当前扫描：默认目录（桌面、下载、文档）",
+            size=12,
+            color=ft.Colors.GREY_600,
+        )
+
         # 进度条
         self.progress_bar = ft.ProgressBar(
             value=0,
@@ -149,11 +200,17 @@ class FileOrganizerApp:
             # 工具栏
             ft.Container(
                 content=ft.Row(
-                    controls=[self.btn_scan, self.btn_organize, self.btn_undo],
+                    controls=[self.btn_scan, self.btn_organize, self.btn_undo, self.btn_change_root, self.btn_select_scan_dirs, self.btn_reset_scan_dirs],
                     spacing=12,
+                    wrap=True,
                 ),
                 padding=ft.Padding.only(left=16, top=12, right=16, bottom=12),
                 bgcolor=ft.Colors.GREY_50,
+            ),
+            # 扫描目录信息
+            ft.Container(
+                content=self.scan_dirs_text,
+                padding=ft.Padding.only(left=16, top=4, right=16, bottom=4),
             ),
             # 搜索 + 筛选
             ft.Container(
@@ -205,7 +262,7 @@ class FileOrganizerApp:
 
     def _scan_worker(self):
         """后台扫描"""
-        dirs = get_scan_dirs()
+        dirs = self.custom_scan_dirs if self.custom_scan_dirs else get_scan_dirs()
         count = [0]
 
         def on_progress(n, path):
@@ -288,50 +345,109 @@ class FileOrganizerApp:
         self._show_preview()
 
     def _show_preview(self):
-        """整理前预览"""
-        cat_counter = Counter()
-        for src, dst in self.plan:
-            parts = dst.relative_to(get_target_root()).parts
-            cat_counter[parts[0]] += 1
-
+        """整理前预览 — 显示每个文件的目标目录，支持修改"""
         total = len(self.plan)
         target = get_target_root()
 
-        category_list = ft.Column(
-            controls=[
-                ft.ListTile(
-                    title=ft.Text(cat),
-                    trailing=ft.Text(f"{count} 个文件", color=ft.Colors.GREY_600),
-                )
-                for cat, count in cat_counter.most_common()
+        # 分类统计
+        cat_counter = Counter()
+        for src, dst in self.plan:
+            try:
+                parts = dst.relative_to(target).parts
+                cat_counter[parts[0]] += 1
+            except ValueError:
+                cat_counter["自定义"] += 1
+
+        # 构建文件预览表格
+        preview_rows = []
+        for i, (src, dst) in enumerate(self.plan):
+            try:
+                rel = dst.relative_to(target)
+                cat = rel.parts[0] if rel.parts else "其他"
+            except ValueError:
+                cat = "自定义"
+
+            preview_rows.append(
+                ft.DataRow(
+                    cells=[
+                        ft.DataCell(ft.Text(src.name, size=12, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, width=160)),
+                        ft.DataCell(self._build_category_chip(cat)),
+                        ft.DataCell(ft.Text(str(dst.parent), size=11, color=ft.Colors.GREY_600, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS, width=280)),
+                        ft.DataCell(
+                            ft.IconButton(
+                                ft.Icons.FOLDER_OPEN,
+                                tooltip="修改目标目录",
+                                icon_size=18,
+                                icon_color=ft.Colors.BLUE_700,
+                                on_click=lambda e, idx=i: self._change_target(idx),
+                            )
+                        ),
+                    ],
+                ),
+            )
+
+        preview_table = ft.DataTable(
+            columns=[
+                ft.DataColumn(ft.Text("文件名", weight=ft.FontWeight.BOLD, size=12)),
+                ft.DataColumn(ft.Text("分类", weight=ft.FontWeight.BOLD, size=12)),
+                ft.DataColumn(ft.Text("目标目录", weight=ft.FontWeight.BOLD, size=12)),
+                ft.DataColumn(ft.Text("操作", weight=ft.FontWeight.BOLD, size=12)),
             ],
-            spacing=0,
+            rows=preview_rows,
+            column_spacing=12,
+            horizontal_margin=8,
+            heading_row_height=36,
+            data_row_min_height=36,
+            data_row_max_height=44,
         )
 
+        # 分类统计栏
+        summary = ft.Row(
+            controls=[
+                ft.Text(f"共 {total} 个文件", size=13, weight=ft.FontWeight.BOLD),
+                ft.Text(f"  |  ", size=13, color=ft.Colors.GREY_400),
+                *[
+                    ft.Text(f"{cat}: {count}", size=12, color=ft.Colors.GREY_600)
+                    for cat, count in cat_counter.most_common()
+                ],
+            ],
+            wrap=True,
+        )
+
+        self._preview_dialog_ref = None  # 用于外部引用
+
         def on_confirm(e):
-            dialog.open = False
+            self._preview_dialog_ref.open = False
             self.page.update()
             self._start_organize()
 
         def on_cancel(e):
-            dialog.open = False
+            self._preview_dialog_ref.open = False
             self.page.update()
 
         dialog = ft.AlertDialog(
             modal=True,
-            title=ft.Text(f"共 {total} 个文件，分为 {len(cat_counter)} 个分类"),
-            content=ft.Column(
-                controls=[
-                    ft.Text(f"目标目录：{target}", size=13, color=ft.Colors.GREY_600),
-                    ft.Container(
-                        content=category_list,
-                        bgcolor=ft.Colors.GREY_50,
-                        border_radius=8,
-                        padding=8,
-                    ),
-                ],
-                spacing=12,
-                width=400,
+            title=ft.Text(f"整理预览 — {total} 个文件"),
+            content=ft.Container(
+                content=ft.Column(
+                    controls=[
+                        summary,
+                        ft.Container(
+                            content=ft.ListView(
+                                controls=[preview_table],
+                                height=350,
+                                auto_scroll=False,
+                            ),
+                            bgcolor=ft.Colors.GREY_50,
+                            border_radius=8,
+                            padding=8,
+                        ),
+                        ft.Text("点击 📁 图标可修改单个文件的目标目录", size=11, color=ft.Colors.GREY_500),
+                    ],
+                    spacing=8,
+                ),
+                width=650,
+                height=450,
             ),
             actions=[
                 ft.TextButton("取消", on_click=on_cancel),
@@ -344,9 +460,92 @@ class FileOrganizerApp:
             actions_alignment=ft.MainAxisAlignment.END,
         )
 
+        self._preview_dialog_ref = dialog
         self.page.overlay.append(dialog)
         dialog.open = True
         self.page.update()
+
+    def _change_target(self, plan_index: int):
+        """点击修改按钮 → 打开文件夹选择器"""
+        self._editing_plan_index = plan_index
+        path = _pick_folder("选择目标文件夹")
+        if not path:
+            self._editing_plan_index = None
+            return
+        self._apply_single_target(plan_index, Path(path))
+
+    def _apply_single_target(self, idx: int, new_root: Path):
+        """在主线程中应用单个文件的目标修改"""
+        if idx >= len(self.plan):
+            return
+
+        src, old_dst = self.plan[idx]
+        new_dst = new_root / src.name
+
+        # 处理重名
+        counter = 1
+        while new_dst.exists():
+            new_dst = new_root / f"{src.stem}_{counter}{src.suffix}"
+            counter += 1
+
+        # 更新 plan
+        self.plan[idx] = (src, new_dst)
+
+        # 同步更新对应 FileInfo 的 target_path
+        for f in self.files:
+            if f.path == src:
+                f.target_path = new_dst
+                break
+
+        # 记录自定义目标
+        self.custom_targets[str(src)] = str(new_root)
+
+        # 刷新预览对话框
+        self._editing_plan_index = None
+        self._refresh_preview()
+
+    def _change_global_root(self, new_root: Path):
+        """更改全局目标根目录，重新生成 plan"""
+
+        # 重新计算 plan
+        new_plan = []
+        for src, old_dst in self.plan:
+            # 从旧目标路径推断分类子目录
+            try:
+                old_rel = old_dst.relative_to(get_target_root())
+                cat_sub = old_rel.parent  # e.g. "文档" or "图片/2025-05"
+                new_dst = new_root / cat_sub / src.name
+            except ValueError:
+                # 自定义目标的文件，保留其子目录结构
+                new_dst = new_root / old_dst.parent.name / src.name
+
+            # 处理重名
+            counter = 1
+            while new_dst.exists():
+                new_dst = new_root / cat_sub / f"{src.stem}_{counter}{src.suffix}"
+                counter += 1
+
+            new_plan.append((src, new_dst))
+
+            # 更新 FileInfo
+            for f in self.files:
+                if f.path == src:
+                    f.target_path = new_dst
+                    break
+
+        self.plan = new_plan
+        self._show_snackbar(f"目标目录已更改为：{new_root}", ft.Colors.GREEN_700)
+
+        # 刷新预览（如果有打开的预览对话框）
+        if self._preview_dialog_ref and self._preview_dialog_ref.open:
+            self._refresh_preview()
+
+    def _refresh_preview(self):
+        """关闭旧预览，重新打开（刷新内容）"""
+        if self._preview_dialog_ref:
+            self._preview_dialog_ref.open = False
+            self.page.update()
+        self._show_preview()
 
     def _start_organize(self):
         """开始整理"""
@@ -570,6 +769,45 @@ class FileOrganizerApp:
             save_user_rules(rules)
         rules_column.controls = [c for c in rules_column.controls if c.title.value != ext]
         self.page.update()
+
+    def _on_change_root(self, e):
+        """更改目标根目录"""
+        path = _pick_folder("选择整理目标根目录")
+        if not path:
+            return
+        self._change_global_root(Path(path))
+
+    def _on_select_scan_dirs(self, e):
+        """选择扫描目录"""
+        path = _pick_folder("选择要扫描的文件夹")
+        if not path:
+            return
+        self._add_scan_dir(path)
+
+    def _add_scan_dir(self, path: str):
+        """在主线程中添加扫描目录"""
+        if self.custom_scan_dirs is None:
+            self.custom_scan_dirs = []
+        if path not in self.custom_scan_dirs:
+            self.custom_scan_dirs.append(path)
+        self._update_scan_dirs_display()
+        self.page.update()
+
+    def _on_reset_scan_dirs(self, e):
+        """恢复默认扫描目录"""
+        self.custom_scan_dirs = None
+        self._update_scan_dirs_display()
+        self.page.update()
+
+    def _update_scan_dirs_display(self):
+        """更新扫描目录显示"""
+        if self.custom_scan_dirs is None:
+            self.scan_dirs_text.value = "当前扫描：默认目录（桌面、下载、文档）"
+            self.btn_reset_scan_dirs.visible = False
+        else:
+            dirs_str = "\n".join(f"  • {d}" for d in self.custom_scan_dirs)
+            self.scan_dirs_text.value = f"当前扫描：\n{dirs_str}"
+            self.btn_reset_scan_dirs.visible = True
 
     def _update_progress(self, value: float):
         self.progress_bar.value = value

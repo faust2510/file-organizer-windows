@@ -1,257 +1,224 @@
-"""核心引擎 — 文件扫描、分类、整理"""
+"""文件整理核心引擎：扫描、分类、整理、多次撤销"""
+import json
 import os
 import shutil
-import json
+import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
-from send2trash import send2trash
-
-from config import EXT_MAP, IGNORE_DIRS, IGNORE_EXTS, CATEGORIES, get_target_root, PHOTO_DATE_FORMAT, load_user_rules
+from config import (
+    CATEGORIES, EXT_MAP, IGNORE_DIRS, IGNORE_EXTS,
+    get_target_root, load_user_rules, PHOTO_DATE_FORMAT,
+)
 
 
 @dataclass
 class FileInfo:
     path: Path
-    size: int
-    mtime: float
-    ext: str
-    category: str = ""
+    category: str = "其他"
     target_path: Optional[Path] = None
+    size: int = 0
+
+    def __post_init__(self):
+        if self.size == 0 and self.path.exists():
+            try:
+                self.size = self.path.stat().st_size
+            except OSError:
+                self.size = 0
 
 
 class FileScanner:
-    """递归扫描目录，收集文件信息"""
-
-    def __init__(self, ignore_hidden=True, max_depth=10):
-        self.ignore_hidden = ignore_hidden
-        self.max_depth = max_depth
-
-    def scan(self, dirs: list[Path], progress_cb=None) -> list[FileInfo]:
-        """扫描多个目录，返回文件列表"""
+    def scan(self, dirs, max_depth=10, progress_cb=None):
         files = []
+        count = [0]
         for d in dirs:
             if d.exists():
-                files.extend(self._scan_dir(d, depth=0, progress_cb=progress_cb))
+                self._walk(d, 0, max_depth, files, progress_cb, count)
         return files
 
-    def _scan_dir(self, directory: Path, depth: int, progress_cb=None) -> list[FileInfo]:
-        """递归扫描单个目录"""
-        if depth > self.max_depth:
-            return []
-
-        files = []
+    def _walk(self, path, depth, max_depth, files, progress_cb, counter):
+        if depth > max_depth:
+            return
         try:
-            entries = list(directory.iterdir())
-        except (PermissionError, OSError):
-            return []
-
+            entries = sorted(path.iterdir(), key=lambda e: e.name)
+        except PermissionError:
+            return
         for entry in entries:
-            name = entry.name
-
-            # 跳过隐藏文件/目录
-            if self.ignore_hidden and name.startswith('.'):
+            if entry.name in IGNORE_DIRS:
                 continue
-
-            # 跳过忽略的目录
-            if entry.is_dir() and name in IGNORE_DIRS:
-                continue
-
             if entry.is_dir():
-                files.extend(self._scan_dir(entry, depth + 1, progress_cb))
+                self._walk(entry, depth + 1, max_depth, files, progress_cb, counter)
             elif entry.is_file():
                 ext = entry.suffix.lower()
                 if ext in IGNORE_EXTS:
                     continue
-
-                try:
-                    stat = entry.stat()
-                    info = FileInfo(
-                        path=entry,
-                        size=stat.st_size,
-                        mtime=stat.st_mtime,
-                        ext=ext,
-                    )
-                    files.append(info)
-
-                    if progress_cb:
-                        progress_cb(len(files), str(entry))
-                except (PermissionError, OSError):
-                    continue
-
-        return files
+                files.append(FileInfo(path=entry))
+                counter[0] += 1
+                if progress_cb:
+                    progress_cb(counter[0], entry)
 
 
 class FileClassifier:
-    """按扩展名分类文件"""
-
-    def __init__(self):
-        self.ext_map = {**EXT_MAP, **load_user_rules()}
-
-    def classify(self, file_info: FileInfo) -> str:
-        """返回分类名"""
-        ext = file_info.ext
-        if ext in self.ext_map:
-            return self.ext_map[ext]
-        return "其他"
-
-    def classify_batch(self, files: list[FileInfo]) -> list[FileInfo]:
-        """批量分类"""
+    def classify_batch(self, files):
+        user_rules = load_user_rules()
+        merged = {**EXT_MAP, **user_rules}
         for f in files:
-            f.category = self.classify(f)
+            ext = f.path.suffix.lower()
+            f.category = merged.get(ext, "其他")
         return files
 
 
 class FileOrganizer:
-    """文件整理 — 预览、执行、撤销"""
+    LOG_FILENAME = "organize_log.json"
 
-    def __init__(self, target_root: Path = None):
-        self.target_root = target_root or get_target_root()
-
-    def preview(self, files: list[FileInfo]) -> list[tuple[Path, Path]]:
-        """生成移动计划 [(src, dst), ...]"""
+    def preview(self, files):
+        target_root = get_target_root()
         plan = []
-        seen_targets = set()
-
+        seen = {}
         for f in files:
-            if not f.category:
+            if not f.path.exists():
                 continue
-
-            dst = self._calc_target(f, seen_targets)
-            if dst:
-                f.target_path = dst
-                plan.append((f.path, dst))
-                seen_targets.add(str(dst))
-
+            cat = f.category
+            if cat == "图片":
+                dest_dir = target_root / cat / self._get_photo_date(f.path)
+            else:
+                dest_dir = target_root / cat
+            dest_name = f.path.name
+            dest = dest_dir / dest_name
+            key = str(dest).lower()
+            if key in seen:
+                seen[key] += 1
+                dest = dest_dir / f"{f.path.stem}({seen[key]}){f.path.suffix}"
+            else:
+                seen[key] = 0
+            f.target_path = dest
+            plan.append((f.path, dest))
         return plan
 
-    def _calc_target(self, f: FileInfo, seen_targets: set) -> Optional[Path]:
-        """计算目标路径（不创建目录）"""
-        category = f.category
-        cat_dir = CATEGORIES.get(category, "Others")
+    def execute(self, plan, log_path, progress_cb=None):
+        moved, skipped, errors = [], [], []
+        total = len(plan)
+        for i, (src, dst) in enumerate(plan):
+            if progress_cb:
+                progress_cb(i + 1, total)
+            try:
+                if not src.exists():
+                    skipped.append(str(src))
+                    continue
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(src), str(dst))
+                _send2trash(src)
+                moved.append({"original": str(src), "destination": str(dst), "timestamp": datetime.now().isoformat()})
+            except Exception as e:
+                errors.append(f"{src}: {e}")
+        operation = {
+            "id": int(time.time() * 1000),
+            "timestamp": datetime.now().isoformat(),
+            "description": f"整理 {len(moved)} 个文件",
+            "moved": moved,
+            "skipped": skipped,
+            "errors": errors,
+        }
+        self._append_log(log_path, operation)
+        return {"moved": moved, "skipped": skipped, "errors": errors}
 
-        # 照片按年-月分文件夹
-        if category == "图片":
-            date = self._get_photo_date(f)
-            if date:
-                sub = PHOTO_DATE_FORMAT.format(year=date.year, month=date.month)
-                target_dir = self.target_root / cat_dir / sub
-            else:
-                target_dir = self.target_root / cat_dir
-        else:
-            target_dir = self.target_root / cat_dir
+    def get_undo_history(self, log_path):
+        return list(reversed(self._read_log(log_path)))
 
-        # 处理重名
-        dst = target_dir / f.path.name
-        if str(dst) in seen_targets or dst.exists():
-            stem = f.path.stem
-            suffix = f.path.suffix
-            counter = 1
-            while dst.exists() or str(dst) in seen_targets:
-                dst = target_dir / f"{stem}_{counter}{suffix}"
-                counter += 1
+    def undo_last(self, log_path):
+        history = self._read_log(log_path)
+        if not history:
+            return {"restored": [], "errors": [], "message": "没有可撤销的操作"}
+        last = history.pop()
+        result = self._undo_operation(last)
+        self._write_log(log_path, history)
+        return result
 
-        return dst
+    def undo_to(self, log_path, operation_id):
+        history = self._read_log(log_path)
+        if not history:
+            return {"restored": [], "errors": [], "message": "没有可撤销的操作"}
+        target_idx = None
+        for i, op in enumerate(history):
+            if op.get("id") == operation_id:
+                target_idx = i
+                break
+        if target_idx is None:
+            return {"restored": [], "errors": [], "message": "未找到该操作记录"}
+        all_restored, all_errors = [], []
+        for op in reversed(history[target_idx:]):
+            r = self._undo_operation(op)
+            all_restored.extend(r["restored"])
+            all_errors.extend(r["errors"])
+        self._write_log(log_path, history[:target_idx])
+        return {"restored": all_restored, "errors": all_errors, "message": f"已撤销 {len(history) - target_idx} 次操作"}
 
-    def _get_photo_date(self, f: FileInfo) -> Optional[datetime]:
-        """获取照片拍摄日期（EXIF 或 mtime）"""
+    def undo(self, log_path):
+        return self.undo_last(log_path)
+
+    def _undo_operation(self, operation):
+        restored, errors = [], []
+        for entry in reversed(operation.get("moved", [])):
+            src, dst = Path(entry["original"]), Path(entry["destination"])
+            try:
+                if dst.exists():
+                    src.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(str(dst), str(src))
+                    _send2trash(dst)
+                    restored.append(str(src))
+                else:
+                    errors.append(f"文件已不存在: {dst}")
+            except Exception as e:
+                errors.append(f"{dst}: {e}")
+        return {"restored": restored, "errors": errors}
+
+    def _read_log(self, log_path):
+        if not log_path.exists():
+            return []
+        try:
+            data = json.loads(log_path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        if isinstance(data, dict):
+            return [data]
+        return data if isinstance(data, list) else []
+
+    def _write_log(self, log_path, history):
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _append_log(self, log_path, operation):
+        history = self._read_log(log_path)
+        history.append(operation)
+        self._write_log(log_path, history)
+
+    def _get_photo_date(self, path):
         try:
             from PIL import Image
             from PIL.ExifTags import Base as ExifBase
-            img = Image.open(f.path)
-            exif = img._getexif()
-            if exif:
-                date_str = exif.get(36867)  # DateTimeOriginal
+            with Image.open(path) as img:
+                exif = img.getexif()
+                date_str = exif.get(ExifBase.DateTime.value)
                 if date_str:
-                    return datetime.strptime(date_str, "%Y:%m:%d %H:%M:%S")
+                    dt = datetime.strptime(date_str, "%Y:%m:%d %H:%M:%S")
+                    return PHOTO_DATE_FORMAT.format(year=dt.year, month=dt.month)
         except Exception:
             pass
-
-        # 回退到文件修改时间
-        return datetime.fromtimestamp(f.mtime)
-
-    def execute(self, plan: list[tuple[Path, Path]], log_path: Path = None, progress_cb=None) -> dict:
-        """执行移动（copy2 + send2trash），返回 {moved: [...], skipped: [...], errors: [...]}"""
-        if log_path is None:
-            log_path = self.target_root / "organize_log.json"
-
-        result = {"moved": [], "skipped": [], "errors": []}
-        log_entries = []
-        total = len(plan)
-
-        for i, (src, dst) in enumerate(plan):
-            try:
-                if dst.exists():
-                    result["skipped"].append(str(src))
-                    continue
-
-                # 确保目标目录存在
-                dst.parent.mkdir(parents=True, exist_ok=True)
-
-                # 先复制到目标，成功后再删除源文件（安全策略）
-                shutil.copy2(str(src), str(dst))
-                send2trash(str(src))
-
-                result["moved"].append({"src": str(src), "dst": str(dst)})
-                log_entries.append({
-                    "timestamp": datetime.now().isoformat(),
-                    "src": str(src),
-                    "dst": str(dst),
-                })
-
-                if progress_cb:
-                    progress_cb(i + 1, total)
-            except Exception as e:
-                result["errors"].append({"src": str(src), "error": str(e)})
-
-        # 写日志
-        if log_entries:
-            existing = []
-            if log_path.exists():
-                try:
-                    existing = json.loads(log_path.read_text(encoding="utf-8"))
-                except Exception:
-                    pass
-            existing.extend(log_entries)
-            log_path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
-
-        return result
-
-    def undo(self, log_path: Path = None) -> dict:
-        """根据日志撤销移动（保留失败条目以便重试）"""
-        if log_path is None:
-            log_path = self.target_root / "organize_log.json"
-
-        if not log_path.exists():
-            return {"restored": [], "errors": [{"error": "日志文件不存在"}]}
-
         try:
-            entries = json.loads(log_path.read_text(encoding="utf-8"))
-        except Exception as e:
-            return {"restored": [], "errors": [{"error": f"读取日志失败: {e}"}]}
+            mtime = datetime.fromtimestamp(path.stat().st_mtime)
+            return PHOTO_DATE_FORMAT.format(year=mtime.year, month=mtime.month)
+        except Exception:
+            return "未知日期"
 
-        result = {"restored": [], "errors": []}
-        remaining = []  # 保留失败条目
 
-        # 从后往前恢复
-        for entry in reversed(entries):
-            src = Path(entry["src"])
-            dst = Path(entry["dst"])
-            try:
-                if src.exists():
-                    result["errors"].append({"file": str(src), "error": "原位置已有文件"})
-                    remaining.append(entry)
-                    continue
-                shutil.move(str(dst), str(src))
-                result["restored"].append({"src": str(dst), "dst": str(src)})
-            except Exception as e:
-                result["errors"].append({"file": str(dst), "error": str(e)})
-                remaining.append(entry)
-
-        # 只保留失败条目（反转回正序）
-        remaining.reverse()
-        log_path.write_text(json.dumps(remaining, ensure_ascii=False, indent=2), encoding="utf-8")
-
-        return result
+def _send2trash(path):
+    try:
+        from send2trash import send2trash
+        send2trash(str(path))
+    except Exception:
+        try:
+            os.remove(str(path))
+        except Exception:
+            pass
