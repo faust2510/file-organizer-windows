@@ -140,7 +140,7 @@ class FileOrganizerApp:
         )
 
         # 文件选择器（用于修改目标目录）
-        self.folder_picker = ft.FilePicker(on_result=self._on_folder_picked)
+        self.folder_picker = ft.FilePicker(on_dialog_result=self._on_folder_picked)
         self.page.overlay.append(self.folder_picker)
 
         # 进度条
